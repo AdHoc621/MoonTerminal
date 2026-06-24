@@ -118,7 +118,7 @@ impl StrategiesView {
                             MoonButton::new("strat-fields-apply")
                                 .success()
                                 .size(MoonButtonSize::Micro)
-                                .label(format!("apply {dirty}"))
+                                .label(t!("strat.fields_apply", n = dirty).to_string())
                                 .on_click(cx.listener(|this, _, _, cx| this.apply_field_edits(cx)))
                                 .render(),
                         )
@@ -126,7 +126,7 @@ impl StrategiesView {
                             MoonButton::new("strat-fields-revert")
                                 .ghost()
                                 .size(MoonButtonSize::Micro)
-                                .label("revert")
+                                .label(t!("strat.fields_revert").to_string())
                                 .on_click(
                                     cx.listener(|this, _, _, cx| this.discard_field_edits(cx)),
                                 )

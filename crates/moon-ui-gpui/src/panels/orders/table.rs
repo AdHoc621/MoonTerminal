@@ -32,24 +32,30 @@ fn order_columns() -> Vec<MoonDataTableColumn> {
     // Колонки и их порядок — как в оригинале (egui): Core · Side · Token · Size ·
     // SL · TS · Vstop · Buy · Cur.P · Fill · Strat. Ширина — логические px: минимум,
     // когда таблица узкая, и пропорциональный вес, когда есть лишняя ширина.
+    // Переводимые заголовки (Core/Side/Token/Cur.P) идут через словарь orders.col.*;
+    // ключи колонок оставляем прежними. Size/SL/TS/Vstop/Buy/Fill/Strat — отраслевые
+    // токены, намеренно НЕ переводим (см. locales/README.md).
     vec![
-        MoonDataTableColumn::new("core", "Core", 90.0),
-        MoonDataTableColumn::new("side", "Side", 60.0),
-        numeric_column("Token", 70.0),
-        numeric_column("Size", 70.0),
+        MoonDataTableColumn::new("core", t!("orders.col.core").to_string(), 90.0),
+        MoonDataTableColumn::new("side", t!("orders.col.side").to_string(), 60.0),
+        numeric_column("token", t!("orders.col.token").to_string(), 70.0),
+        numeric_column("size", "Size", 70.0),
         MoonDataTableColumn::new("sl", "SL", 46.0),
         MoonDataTableColumn::new("ts", "TS", 46.0),
         MoonDataTableColumn::new("vstop", "Vstop", 56.0),
-        numeric_column("Buy", 80.0),
-        numeric_column("Cur.P", 86.0),
-        numeric_column("Fill", 56.0),
-        numeric_column("Strat", 90.0),
+        numeric_column("buy", "Buy", 80.0),
+        numeric_column("cur.p", t!("orders.col.price").to_string(), 86.0),
+        numeric_column("fill", "Fill", 56.0),
+        numeric_column("strat", "Strat", 90.0),
     ]
 }
 
-fn numeric_column(title: impl Into<SharedString>, width: f32) -> MoonDataTableColumn {
-    let title = title.into();
-    MoonDataTableColumn::new(title.to_lowercase(), title, width).right()
+fn numeric_column(
+    key: impl Into<SharedString>,
+    title: impl Into<SharedString>,
+    width: f32,
+) -> MoonDataTableColumn {
+    MoonDataTableColumn::new(key, title, width).right()
 }
 
 fn order_table_row(e: &OrderEntry, view: &Entity<OrdersPanel>, p: MoonPalette) -> MoonDataRow {

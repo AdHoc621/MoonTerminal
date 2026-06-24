@@ -63,6 +63,14 @@ strat.fields_count:
   ru: "полей: %{n}"
   en: "fields: %{n}"
   es: "campos: %{n}"
+strat.fields_apply:
+  ru: "применить %{n}"
+  en: "apply %{n}"
+  es: "aplicar %{n}"
+strat.fields_revert:
+  ru: "откатить"
+  en: "revert"
+  es: "revertir"
 strat.help:
   ru: "Описание"
   en: "Description"
