@@ -1,0 +1,79 @@
+name: release
+
+# Publishes a GitHub Release with downloadable .exe + .dmg when a v* tag is
+# pushed. The build.yml workflow only gates compilation; THIS one ships artifacts
+# users can download from the Releases page.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag (e.g. v0.0.1)"
+        required: true
+
+permissions:
+  contents: write # required to create the GitHub Release
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+
+jobs:
+  windows:
+    name: Windows .exe
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+      - uses: Swatinem/rust-cache@v2
+      - name: Build release binary
+        run: cargo build -p moon-ui-gpui --bin moonterminal --release --target x86_64-pc-windows-msvc
+      - name: Stage artifact
+        shell: bash
+        run: |
+          mkdir -p dist
+          cp target/x86_64-pc-windows-msvc/release/moonterminal.exe dist/MoonTerminal.exe
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: dist/MoonTerminal.exe
+          if-no-files-found: error
+
+  macos:
+    name: macOS .dmg
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+      - name: Build release binary
+        run: cargo build -p moon-ui-gpui --bin moonterminal --release --target aarch64-apple-darwin
+      - name: Package .app + .dmg
+        run: bash .github/scripts/make-dmg.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos
+          path: dist/MoonTerminal.dmg
+          if-no-files-found: error
+
+  publish:
+    name: Publish GitHub Release
+    needs: [windows, macos]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
+          generate_release_notes: true
+          files: |
+            dist/windows/MoonTerminal.exe
+            dist/macos/MoonTerminal.dmg
