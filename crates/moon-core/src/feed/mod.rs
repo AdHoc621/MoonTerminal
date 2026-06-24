@@ -72,6 +72,17 @@ pub struct NewStrategySpec {
     pub fields: Vec<(String, String)>,
 }
 
+/// Какой стоп-флаг ордера переключает клик по ячейке в таблице «Ордера».
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OrderStopKind {
+    /// Стоп-лосс (`SL`).
+    StopLoss,
+    /// Трейлинг-стоп (`TS`).
+    Trailing,
+    /// VStop.
+    VStop,
+}
+
 /// Команды координатора → backend ядра. Задают рыночную РОЛЬ ядра.
 #[derive(Debug, Clone)]
 pub enum CoreCmd {
@@ -147,6 +158,16 @@ pub enum CoreCmd {
     MoveOrder { uid: u64, new_price: f64 },
     /// Отменить ордер ядра по `uid`. Транслируется в moonproto `orders().cancel`.
     CancelOrder { uid: u64 },
+    /// Включить/выключить стоп-флаг (SL/TS/VStop) КОНКРЕТНОГО ордера ядра по `uid` —
+    /// клик по ячейке в таблице «Ордера». feed читает удержанный снимок ордера, флипает
+    /// нужный флаг, СОХРАНЯЯ его уровень/spread/режим (percent|fixed), и шлёт
+    /// `orders().update_stops` (SL/TS) либо `orders().update_vstop` (VStop). Рантайм сам
+    /// гейтит отправку (send-if-changed) против своей живой модели ордеров.
+    SetOrderStop {
+        uid: u64,
+        kind: OrderStopKind,
+        on: bool,
+    },
     /// Точечная правка `ClientSettings` (TP/SL/выбор sell-пресета) из тулбара. feed берёт
     /// УДЕРЖАННЫЙ снимок настроек, патчит его хелпером и шлёт целиком (`settings().send`).
     EditClientSettings(ClientSettingsEdit),

@@ -26,7 +26,7 @@ use crate::data::OrderBookModel;
 use crate::db::ReportTx;
 use crate::feed::{
     self, ClientSettingsEdit, ConnStatus, CoreCmd, ExchangeId, FeedHandle, FeedMsg, FeedWakeTx,
-    LevManageEdit, NewStrategySpec, WalletKind,
+    LevManageEdit, NewStrategySpec, OrderStopKind, WalletKind,
 };
 use crate::market::{MarketDataMode, MarketDataSource, MarketStore, SharedMarketStore};
 
@@ -535,6 +535,18 @@ impl SessionManager {
     /// Отменить ордер ядра по `uid`.
     pub fn cancel_order(&self, core: CoreId, uid: u64) -> Result<()> {
         self.send_core_cmd(core, CoreCmd::CancelOrder { uid }, "cancel order")
+    }
+
+    /// Включить/выключить стоп-флаг (SL/TS/VStop) ордера ядра по `uid` — клик по ячейке в
+    /// таблице «Ордера». feed сохраняет настроенный уровень стопа при повторном включении.
+    pub fn set_order_stop(
+        &self,
+        core: CoreId,
+        uid: u64,
+        kind: OrderStopKind,
+        on: bool,
+    ) -> Result<()> {
+        self.send_core_cmd(core, CoreCmd::SetOrderStop { uid, kind, on }, "set order stop")
     }
 
     /// Точечная правка `ClientSettings` ядра из тулбара (TP/SL/выбор sell-пресета). feed

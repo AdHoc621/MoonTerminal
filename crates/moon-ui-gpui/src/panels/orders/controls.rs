@@ -79,6 +79,44 @@ impl OrdersPanel {
         menu
     }
 
+    /// Поле-список выбора отображаемых колонок таблицы. Каждый пункт — чекбокс-тогл
+    /// видимости колонки; меню НЕ закрывается на клик (`close_on_select(false)`), чтобы
+    /// можно было отметить сразу несколько. Нельзя скрыть ВСЕ колонки — последняя
+    /// видимая колонка не тогается (иначе таблица станет пустой). Состояние персистится.
+    pub(super) fn columns_menu(&self, cx: &Context<Self>) -> impl IntoElement {
+        let view = cx.entity();
+        let cur = self.view;
+        let mut menu = MoonDropdown::new("orders-columns")
+            .label(format!("{} ▾", t!("orders.columns")))
+            .trigger_variant(MoonButtonVariant::Soft)
+            .trigger_size(MoonButtonSize::Action)
+            .trigger_width(86.0)
+            .menu_width(170.0)
+            .menu_size(MoonMenuSize::Compact)
+            .close_on_select(false);
+        for col in OrdCol::ALL {
+            let shown = cur.shows(col);
+            // Последняя оставшаяся видимая колонка заблокирована на выключение.
+            let last_visible = shown && cur.columns == col.bit();
+            let view = view.clone();
+            menu = menu.item(
+                MoonMenuItem::with_key(format!("col-{}", col.key()), super::table::col_title(col))
+                    .checked(shown)
+                    .disabled(last_visible)
+                    .on_click(move |_, _, app| {
+                        Self::mutate(&view, app, |v| {
+                            let next = v.columns ^ col.bit();
+                            // Защита от пустой таблицы: не применяем, если погасли все колонки.
+                            if next != 0 {
+                                v.columns = next;
+                            }
+                        })
+                    }),
+            );
+        }
+        menu
+    }
+
     /// Меню сортировки/фильтра (порт ПКМ-меню egui): фильтр текущего маркета + две
     /// тогл-группы сортировки. В GPUI — попап-кнопка (PopupMenu основан на Action).
     pub(super) fn sort_menu(&self, cx: &Context<Self>) -> impl IntoElement {

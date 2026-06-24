@@ -107,7 +107,74 @@ impl OrderKind {
     }
 }
 
-/// Состояние вида таблицы (источник + тип + фильтр + сортировка). Своё у панели.
+/// Колонки таблицы ордеров в каноничном порядке. Позиция в [`OrdCol::ALL`] = номер бита
+/// в маске видимости [`OrdersViewState::columns`]; строковый [`OrdCol::key`] — стабильный
+/// идентификатор для персиста (docks.json), НЕ завязан на порядок enum.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum OrdCol {
+    Core,
+    Side,
+    Token,
+    Size,
+    Sl,
+    Ts,
+    Vstop,
+    Buy,
+    CurP,
+    Fill,
+    Strat,
+}
+
+impl OrdCol {
+    pub(super) const ALL: [OrdCol; 11] = [
+        OrdCol::Core,
+        OrdCol::Side,
+        OrdCol::Token,
+        OrdCol::Size,
+        OrdCol::Sl,
+        OrdCol::Ts,
+        OrdCol::Vstop,
+        OrdCol::Buy,
+        OrdCol::CurP,
+        OrdCol::Fill,
+        OrdCol::Strat,
+    ];
+
+    /// Стабильный ключ для персиста (docks.json) и ключей элементов меню.
+    pub(super) fn key(self) -> &'static str {
+        match self {
+            OrdCol::Core => "core",
+            OrdCol::Side => "side",
+            OrdCol::Token => "token",
+            OrdCol::Size => "size",
+            OrdCol::Sl => "sl",
+            OrdCol::Ts => "ts",
+            OrdCol::Vstop => "vstop",
+            OrdCol::Buy => "buy",
+            OrdCol::CurP => "cur.p",
+            OrdCol::Fill => "fill",
+            OrdCol::Strat => "strat",
+        }
+    }
+
+    /// Бит колонки в маске видимости (по позиции в `ALL`).
+    pub(super) fn bit(self) -> u16 {
+        let idx = OrdCol::ALL
+            .iter()
+            .position(|c| *c == self)
+            .unwrap_or_default();
+        1u16 << idx
+    }
+
+    fn from_key(key: &str) -> Option<OrdCol> {
+        OrdCol::ALL.iter().copied().find(|c| c.key() == key)
+    }
+}
+
+/// Маска «все колонки видимы» — дефолт вида.
+pub(super) const ALL_COLUMNS_MASK: u16 = (1u16 << OrdCol::ALL.len()) - 1;
+
+/// Состояние вида таблицы (источник + тип + фильтр + сортировка + видимые колонки). Своё у панели.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) struct OrdersViewState {
     pub(super) source: OrdersSource,
@@ -115,6 +182,24 @@ pub(super) struct OrdersViewState {
     pub(super) only_current_market: bool,
     pub(super) primary: PrimarySort,
     pub(super) newest_first: bool,
+    /// Битовая маска видимых колонок (бит = `OrdCol::bit`). Персистится списком ключей.
+    pub(super) columns: u16,
+}
+
+impl OrdersViewState {
+    /// Видима ли колонка в текущем виде.
+    pub(super) fn shows(&self, col: OrdCol) -> bool {
+        self.columns & col.bit() != 0
+    }
+
+    /// Видимые колонки в каноничном порядке.
+    pub(super) fn visible_columns(&self) -> Vec<OrdCol> {
+        OrdCol::ALL
+            .iter()
+            .copied()
+            .filter(|c| self.shows(*c))
+            .collect()
+    }
 }
 
 impl Default for OrdersViewState {
@@ -125,6 +210,7 @@ impl Default for OrdersViewState {
             only_current_market: false,
             primary: PrimarySort::Creation,
             newest_first: true,
+            columns: ALL_COLUMNS_MASK,
         }
     }
 }
@@ -383,6 +469,18 @@ fn view_from_info(info: &PanelInfo) -> OrdersViewState {
         if let Some(o) = j.get("only_current").and_then(|x| x.as_bool()) {
             v.only_current_market = o;
         }
+        // Видимые колонки: список ключей → маска. Пустой/пропущенный список или ноль
+        // валидных ключей → оставляем дефолт (все видимы), чтобы не показать пустую таблицу.
+        if let Some(arr) = j.get("columns").and_then(|x| x.as_array()) {
+            let mask = arr
+                .iter()
+                .filter_map(|x| x.as_str())
+                .filter_map(OrdCol::from_key)
+                .fold(0u16, |m, c| m | c.bit());
+            if mask != 0 {
+                v.columns = mask;
+            }
+        }
     }
     v
 }
@@ -421,6 +519,14 @@ impl Panel for OrdersPanel {
                 "kind": self.view.kind.to_u8(),
                 "newest_first": self.view.newest_first,
                 "only_current": self.view.only_current_market,
+                // Видимые колонки — списком стабильных ключей (не маской: устойчиво к смене
+                // порядка enum). Отсутствие поля при restore → все колонки видимы.
+                "columns": self
+                    .view
+                    .visible_columns()
+                    .iter()
+                    .map(|c| c.key())
+                    .collect::<Vec<_>>(),
             })),
         }
     }
@@ -465,6 +571,7 @@ impl Render for OrdersPanel {
             .py_1()
             .child(self.source_combo(&cores, cx))
             .child(self.kind_combo(cx))
+            .child(self.columns_menu(cx))
             .child(self.sort_menu(cx))
             .child(
                 div()
@@ -482,7 +589,7 @@ impl Render for OrdersPanel {
         }
 
         // ── Виртуальная таблица в геометрии HTML-эталона ──
-        let table = table::orders_table(entries, cx);
+        let table = table::orders_table(entries, view.columns, cx);
 
         v_flex()
             .id("orders-panel")

@@ -8,7 +8,9 @@
 //! `MoonOrders::move_order` (TOrderReplaceCommand, CmdId=6),
 //! `MoonOrders::cancel` (TOrderCancelCommand, CmdId=10).
 
-use moonproto::{MoonClient, NewOrderParams, OrderSide};
+use moonproto::{MoonClient, NewOrderParams, OrderSide, VStopParams};
+
+use crate::feed::OrderStopKind;
 
 /// Поставить новый ордер (TNewOrderCommand). `short` — сторона ПОЗИЦИИ
 /// (Long/Short, зеркало `is_short`); `strategy_id=None` шлёт `StratID=0` —
@@ -59,5 +61,82 @@ pub(super) fn cancel_order(client: &MoonClient, server_id: u64, uid: u64) {
     match client.orders().cancel(uid) {
         Ok(()) => log::info!("core {server_id} cancel order {uid}"),
         Err(error) => log::warn!("core {server_id} cancel order {uid} failed: {error}"),
+    }
+}
+
+/// Включить/выключить стоп-флаг (SL/TS/VStop) ордера по `uid`. Берём УДЕРЖАННЫЙ снимок
+/// ордера и флипаем только нужный флаг, СОХРАНЯЯ уровень/spread/режим (percent|fixed) —
+/// чтобы повторное включение восстановило ровно тот стоп, что был настроен. Рантайм
+/// сам сравнивает с живой моделью (send-if-changed) и не шлёт пакет, если ничего не
+/// изменилось. SL/TS → `update_stops`, VStop → `update_vstop`.
+pub(super) fn set_order_stop(
+    client: &MoonClient,
+    server_id: u64,
+    uid: u64,
+    kind: OrderStopKind,
+    on: bool,
+) {
+    let Some(snap) = client.snapshot() else {
+        log::warn!("core {server_id} set order stop {uid} {kind:?}->{on}: no snapshot yet");
+        return;
+    };
+    let Some(o) = snap.orders().iter().find(|o| o.uid == uid) else {
+        log::warn!("core {server_id} set order stop {uid} {kind:?}->{on}: order not tracked");
+        return;
+    };
+    log::info!(
+        "core {server_id} set order stop {uid} {kind:?}->{on}: found order emulator={} sl={} ts={} vstop={}",
+        o.emulator_mode,
+        o.stops.stop_loss_enabled(),
+        o.stops.trailing_enabled(),
+        o.vstop_on
+    );
+    let result = match kind {
+        OrderStopKind::StopLoss => {
+            let stops = o.stops;
+            let next = if on {
+                let (level, spread) = (stops.stop_loss_level(), stops.stop_loss_spread());
+                if stops.stop_loss_fixed() {
+                    stops.with_stop_loss_fixed(level, spread)
+                } else {
+                    stops.with_stop_loss_percent(level, spread)
+                }
+            } else {
+                stops.without_stop_loss()
+            };
+            client.orders().update_stops(uid, next)
+        }
+        OrderStopKind::Trailing => {
+            let stops = o.stops;
+            let next = if on {
+                let (level, spread) = (stops.trailing_level(), stops.trailing_spread());
+                if stops.trailing_fixed() {
+                    stops.with_trailing_fixed(level, spread)
+                } else {
+                    stops.with_trailing_percent(level, spread)
+                }
+            } else {
+                stops.without_trailing()
+            };
+            client.orders().update_stops(uid, next)
+        }
+        OrderStopKind::VStop => {
+            let params = if on {
+                if o.vstop_fixed {
+                    VStopParams::fixed(o.vstop_level, o.vstop_vol)
+                } else {
+                    VStopParams::percent(o.vstop_level, o.vstop_vol)
+                }
+            } else {
+                VStopParams::disabled()
+            };
+            client.orders().update_vstop(uid, params)
+        }
+    };
+    match result {
+        Ok(()) => log::info!("core {server_id} set order {uid} {kind:?} -> {on}"),
+        Err(error) => {
+            log::warn!("core {server_id} set order {uid} {kind:?} -> {on} failed: {error}")
+        }
     }
 }

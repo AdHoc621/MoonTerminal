@@ -50,6 +50,10 @@ orders.all_cores:
   ru: "Все ядра"
   en: "All cores"
   es: "Todos los núcleos"
+orders.columns:
+  ru: "Поля"
+  en: "Fields"
+  es: "Campos"
 orders.kind.all:
   ru: "Все"
   en: "All"
