@@ -902,41 +902,12 @@ impl Render for DetachedChartHost {
         });
         // Поле ввода монеты (поиск) шапки + список совпадений. Список рисуем на уровне v_flex
         // (после тела), иначе тело окна (paint-порядок ниже) перекроет выпадашку из шапки.
-        // Свой крестик очистки (чёткий ✕ поверх правого края поля): встроенный cleanable у
-        // MoonInput почти не виден, а форк правим только по явной просьбе.
-        let coin_clear = (!self.coin_query.trim().is_empty()).then(|| {
-            let input = self.coin_input.clone();
-            let view = cx.entity();
-            div()
-                .id("detached-coin-clear")
-                .absolute()
-                .right(px(4.0))
-                .top_0()
-                .bottom_0()
-                .flex()
-                .items_center()
-                .px(px(2.0))
-                .cursor_pointer()
-                .text_size(design::t_body(cx))
-                .text_color(rgb(p.text_muted))
-                .hover(|s| s.text_color(rgb(p.text)))
-                .on_mouse_down(MouseButton::Left, move |_, window, app| {
-                    input.update(app, |inp, c| inp.set_value(SharedString::default(), window, c));
-                    view.update(app, |this, cx| this.clear_coin_search(cx));
-                    app.stop_propagation();
-                })
-                .child("✕")
-        });
-        let coin_search_el = div()
-            .relative()
-            .child(
-                div().w(px(140.0)).child(
-                    MoonInput::new("detached-coin-search")
-                        .state(&self.coin_input)
-                        .small(),
-                ),
-            )
-            .children(coin_clear);
+        let coin_search_el = div().w(px(140.0)).child(
+            MoonInput::new("detached-coin-search")
+                .state(&self.coin_input)
+                .cleanable(true)
+                .small(),
+        );
         let coin_popup = self.coin_popup_open.then(|| {
             let results = self.coin_results(cx);
             let view = cx.entity();

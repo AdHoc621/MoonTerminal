@@ -188,41 +188,16 @@ impl Render for ChartTabs {
             .right_0()
             .mt(px(2.0))
         });
-        // Свой крестик очистки (cleanable у MoonInput почти не виден — это стайлинг форка,
-        // править форк не наша зона): чёткий ✕ поверх правого края поля, виден при непустом вводе.
-        let coin_clear = (!self.coin_query.trim().is_empty()).then(|| {
-            let input = self.coin_input.clone();
-            let view = cx.entity();
-            div()
-                .id("tabs-coin-clear")
-                .absolute()
-                .right(px(4.0))
-                .top_0()
-                .bottom_0()
-                .flex()
-                .items_center()
-                .px(px(2.0))
-                .cursor_pointer()
-                .text_size(crate::design::t_body(cx))
-                .text_color(rgb(p_strip.text_muted))
-                .hover(|s| s.text_color(rgb(p_strip.text)))
-                .on_mouse_down(MouseButton::Left, move |_, window, app| {
-                    input.update(app, |inp, c| inp.set_value(SharedString::default(), window, c));
-                    view.update(app, |this, cx| this.clear_coin_search(cx));
-                    app.stop_propagation();
-                })
-                .child("✕")
-        });
         let coin_search_el = div()
             .relative()
             .child(
                 div().w(px(140.0)).child(
                     MoonInput::new("tabs-coin-search")
                         .state(&self.coin_input)
+                        .cleanable(true)
                         .small(),
                 ),
             )
-            .children(coin_clear)
             .children(coin_popup);
         // Слой-перехватчик клика вне списка монеты (закрыть). Ниже кластера в z-порядке.
         let coin_dismiss = self.coin_popup_open.then(|| {
