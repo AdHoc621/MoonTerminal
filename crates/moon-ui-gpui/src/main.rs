@@ -722,7 +722,7 @@ fn main() -> anyhow::Result<()> {
 
     // Регистрируем встроенные SVG-иконки MoonUI как AssetSource — без этого `IconName::*`
     // (напр. крестик очистки `cleanable` = CircleX) не находят svg и рисуются пустыми.
-    let app = gpui_platform::application().with_assets(moon_ui_components_assets::Assets);
+    let app = gpui_platform::application().with_assets(moon_ui::MoonAssets);
     app.run(move |cx| {
         init_moon_ui(cx);
         install_moon_theme_for_config(&cfg, cx);
