@@ -5,7 +5,7 @@ name: release
 # users can download from the Releases page.
 on:
   push:
-    tags: ["v*"]
+    tags: ["v*", "[0-9]*"]
   workflow_dispatch:
     inputs:
       tag:
