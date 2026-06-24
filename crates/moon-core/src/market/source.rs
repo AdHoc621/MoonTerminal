@@ -244,6 +244,18 @@ impl MarketDataSource {
         bump_generation(&mut inner.provider_generations, core);
     }
 
+    /// Убрать клиента удалённого ядра (сервер исключён из конфига). Курсоры/ревизии,
+    /// где оно было провайдером, тоже снимаем, чтобы не держать мёртвые рынки.
+    pub fn remove_client(&self, core: CoreId) {
+        let mut inner = self.inner.write().expect("market source poisoned");
+        inner.clients.remove(&core);
+        inner.cursors.retain(|(provider, _), _| *provider != core);
+        inner.market_revisions.retain(|(provider, _), _| *provider != core);
+        inner.provider_orderbook_kind.remove(&core);
+        inner.core_provider.remove(&core);
+        bump_generation(&mut inner.provider_generations, core);
+    }
+
     pub fn set_provider_map(&self, core_provider: &HashMap<CoreId, CoreId>) {
         let mut inner = self.inner.write().expect("market source poisoned");
         inner.core_provider = core_provider.clone();

@@ -33,7 +33,6 @@ use crate::icons::IconSet;
 use crate::{Backend, design};
 use moon_core::config::{AppConfig, Language};
 use moon_core::market::MarketDataMode;
-use moon_core::session::SessionManager;
 
 use connections::ConnRow;
 use interface::Iface;
@@ -471,20 +470,17 @@ impl SettingsView {
         }
 
         if struct_changed {
-            // Рестарт сессий по новому конфигу + пересоздание окон групп (их число/состав
-            // зависит от серверов/групп). epoch сохраняем прежний.
+            // Инкрементальный реконсайл сессий по новому конфигу (НЕ полный рестарт):
+            // добавляем новые ядра, гасим удалённые, переподнимаем только изменённые —
+            // неизменные ядра не дёргаем. epoch/market_mode сохраняем. chart_market_refs
+            // НЕ сбрасываем: пережившие окна сохраняют свои подписки, закрытые освободят их
+            // через on_release панелей, новые — зарегистрируют при открытии.
             self.backend.update(cx, |b, _| {
-                let mut s = SessionManager::start(
-                    &b.config,
-                    b.epoch,
-                    b.reports.as_ref().map(|h| &h.tx),
-                    b.session.feed_wake(),
-                );
-                s.set_market_mode(b.config.market_mode);
-                b.session = s;
-                b.reset_chart_market_refs();
+                let reports = b.reports.as_ref().map(|h| &h.tx);
+                b.session.reconcile(&b.config, reports);
+                b.session.set_market_mode(b.config.market_mode);
             });
-            self.rebuild_group_windows(cx);
+            self.reconcile_group_windows(cx);
         } else if mode_changed {
             // Режим рынка — живо: ядра остаются на связи, координатор пере-выберет
             // провайдеров на следующем тике.
@@ -534,6 +530,72 @@ impl SettingsView {
             let _ = h.update(cx, |_, window, _| window.remove_window());
         }
         for (i, g) in crate::group_window::groups(&cfg).into_iter().enumerate() {
+            crate::group_window::spawn_group_window(
+                cx,
+                &self.backend,
+                &cfg,
+                g,
+                epoch,
+                &layout,
+                i as f32 * 40.0,
+            );
+        }
+    }
+
+    /// Инкрементальный реконсайл окон групп (вместо разрушительного `rebuild_group_windows`):
+    /// закрывает окна ТОЛЬКО исчезнувших групп (и их откреп-чарты), открывает окна ТОЛЬКО
+    /// новых групп, а окна сохранившихся групп НЕ трогает — их `ChartTabs` сами подхватят
+    /// добавленные/убранные ядра через сигнатуру. Так открытые вкладки и раскладка переживают
+    /// добавление/удаление серверов (фикс: раньше любое изменение состава сносило все окна).
+    fn reconcile_group_windows(&mut self, cx: &mut Context<Self>) {
+        let (close_group, close_detached, spawn_groups, cfg, epoch, layout) =
+            self.backend.update(cx, |b, _| {
+                let want = crate::group_window::groups(&b.config);
+                let want_set: HashSet<&str> = want.iter().map(String::as_str).collect();
+                // Окна исчезнувших групп → закрыть.
+                let close_group: Vec<WindowHandle<Root>> = b
+                    .group_windows
+                    .iter()
+                    .filter(|(g, _)| !want_set.contains(g.as_str()))
+                    .map(|(_, h)| *h)
+                    .collect();
+                let gone: HashSet<String> = b
+                    .group_windows
+                    .keys()
+                    .filter(|g| !want_set.contains(g.as_str()))
+                    .cloned()
+                    .collect();
+                b.group_windows.retain(|g, _| want_set.contains(g.as_str()));
+                // Откреп-чарты исчезнувших групп → закрыть (их группы больше нет).
+                let close_detached: Vec<WindowHandle<Root>> = b
+                    .detached_chart_windows
+                    .iter()
+                    .filter(|(g, _)| gone.contains(g))
+                    .map(|(_, h)| *h)
+                    .collect();
+                b.detached_chart_windows.retain(|(g, _)| !gone.contains(g));
+                // Новые группы (в want, окна ещё нет) → открыть. Сохранившиеся пропускаем.
+                let spawn_groups: Vec<String> = want
+                    .iter()
+                    .filter(|g| !b.group_windows.contains_key(g.as_str()))
+                    .cloned()
+                    .collect();
+                (
+                    close_group,
+                    close_detached,
+                    spawn_groups,
+                    b.config.clone(),
+                    b.epoch,
+                    b.layout.clone(),
+                )
+            });
+        for h in close_group {
+            let _ = h.update(cx, |_, window, _| window.remove_window());
+        }
+        for h in close_detached {
+            let _ = h.update(cx, |_, window, _| window.remove_window());
+        }
+        for (i, g) in spawn_groups.into_iter().enumerate() {
             crate::group_window::spawn_group_window(
                 cx,
                 &self.backend,

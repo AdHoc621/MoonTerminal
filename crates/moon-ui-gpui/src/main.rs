@@ -544,15 +544,6 @@ impl Backend {
         }
     }
 
-    fn reset_chart_market_refs(&mut self) {
-        self.chart_market_refs.clear();
-        self.chart_orderbook_refs.clear();
-        self.desired.clear();
-        self.desired_orderbook.clear();
-        self.chart_market_refs_epoch = self.chart_market_refs_epoch.wrapping_add(1);
-        self.desired_open_dirty = true;
-    }
-
     fn rebuild_desired_markets(&mut self) {
         let mut desired: Vec<(CoreId, String)> = self
             .chart_market_refs
@@ -741,6 +732,18 @@ fn main() -> anyhow::Result<()> {
         let dock_states = dock_persist::load_all();
         let detached = detached::load_all();
 
+        // Одноразовый ремап charts.json: до v11 схемы вкладки хранили ПОЗИЦИОННЫЕ CoreId,
+        // а теперь CoreId = стабильный uid. Перепривязываем, пока порядок серверов тот же,
+        // что был при записи файла (флаг взводится только при апгрейде со старой версии).
+        let chart_specs = {
+            let mut specs = chart_persist::load_all();
+            if cfg.chart_core_remap_needed {
+                chart_persist::remap_core_ids(&mut specs, &cfg.servers);
+                chart_persist::save_all(&specs);
+            }
+            specs
+        };
+
         // БД отчётов: поднимаем writer (как egui App). Его `tx` отдаём сессии (ядро
         // шлёт close-report → запись в SQLite), `generation` живёт в Backend для окна
         // «Отчёт». None = БД недоступна (окно отчётов покажет пусто).
@@ -823,7 +826,7 @@ fn main() -> anyhow::Result<()> {
             #[cfg(any(debug_assertions, moon_profile_debug, feature = "debug-tools"))]
             debug_chart_windows: Vec::new(),
             chart_consumers: Vec::new(),
-            chart_specs: chart_persist::load_all(),
+            chart_specs,
             chart_specs_dirty: false,
             config_dirty: false,
             quitting: false,

@@ -21,7 +21,15 @@ use crate::market::MarketDataMode;
 /// v6: добавлены `ui_font_delta` + `ui_scale`.
 /// v7: добавлен `chart_memory_percent`. v8: добавлен per-server `chart_bundle`.
 /// v9: добавлен `charts_stack_scroll`. v10: добавлен блок `hotkeys`.
-pub const SCHEMA_VERSION: u32 = 10;
+/// v11: рантайм-`CoreId` стал стабильным (= `uid`, а не позиция) → одноразовый
+///      ремап legacy позиционных CoreId в `charts.json` (см. `COREID_UID_VERSION`).
+pub const SCHEMA_VERSION: u32 = 11;
+
+/// Версия схемы, начиная с которой рантайм-`CoreId == uid` (стабильный). Конфиги
+/// старее неё хранили в `charts.json` ПОЗИЦИОННЫЕ CoreId — их надо один раз
+/// перепривязать к uid. Фиксированная (НЕ `SCHEMA_VERSION`), чтобы будущие bump'ы
+/// схемы не запускали ремап повторно. См. `reconcile::merge`, `chart_persist::remap_core_ids`.
+pub const COREID_UID_VERSION: u32 = 11;
 
 /// Старые файлы без поля `version` читаются как 0 → меньше SCHEMA_VERSION →
 /// триггерят досейв с дослоением новых дефолтов.

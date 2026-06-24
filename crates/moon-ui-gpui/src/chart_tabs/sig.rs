@@ -38,6 +38,11 @@ pub(super) fn chart_tabs_sig(b: &Backend, group: &str) -> u64 {
     }
     let store = b.session.store();
     for s in b.session.sessions().iter().filter(|s| s.group == group) {
+        // Явно вкладываем САМ id ядра, а не только его detects_rev: добавление/удаление
+        // ядра в группе должно менять сигнатуру (→ ChartTabs::ingest перекомпонует вкладки)
+        // даже если у новичка ещё нет детектов (detects_rev=0). Раньше состав влиял лишь
+        // побочно через `*31`, что хрупко.
+        sig = sig.wrapping_mul(31).wrapping_add(s.id);
         if let Some(d) = store.core(s.id) {
             sig = sig.wrapping_mul(31).wrapping_add(d.detects_rev);
         }

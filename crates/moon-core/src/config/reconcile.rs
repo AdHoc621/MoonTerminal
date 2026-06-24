@@ -9,7 +9,7 @@ use super::hotkeys::HotkeysConfig;
 use super::lang::Language;
 use super::schema::{
     clamp_chart_memory_percent, clamp_chart_stack_height, ServerEntry, ServerMeta, ServersFile,
-    SettingsFile, SCHEMA_VERSION,
+    SettingsFile, COREID_UID_VERSION, SCHEMA_VERSION,
 };
 use super::servers;
 use super::ServerConfig;
@@ -50,6 +50,11 @@ pub struct Merged {
     /// Нужно пере-сохранить на диск: присвоены новые uid и/или версия схемы
     /// устарела (надо дослоить дефолты новых полей в settings.toml).
     pub dirty: bool,
+    /// Конфиг был версии < `COREID_UID_VERSION` → `charts.json` хранит ПОЗИЦИОННЫЕ
+    /// CoreId, их надо один раз перепривязать к стабильным uid (делает UI на старте,
+    /// т.к. формат `charts.json` живёт в UI-крейте). Одноразово: после досейва версия
+    /// поднимется и флаг больше не взведётся.
+    pub chart_core_remap_needed: bool,
 }
 
 /// servers.enc + settings.toml → рантайм-серверы. Привязка меты по uid,
@@ -57,6 +62,8 @@ pub struct Merged {
 pub fn merge(sf: ServersFile, meta: SettingsFile) -> Merged {
     let mut next_uid = next_free_uid(&sf, &meta);
     let mut dirty = meta.version < SCHEMA_VERSION;
+    // До v11 рантайм-CoreId был позиционным → charts.json хранит позиционные id.
+    let chart_core_remap_needed = meta.version < COREID_UID_VERSION;
     let language = meta.language;
     let market_mode = meta.market_mode;
     let charts_split_by_core = meta.charts_split_by_core;
@@ -75,8 +82,7 @@ pub fn merge(sf: ServersFile, meta: SettingsFile) -> Merged {
     let servers = sf
         .servers
         .into_iter()
-        .enumerate()
-        .map(|(i, e)| {
+        .map(|e| {
             // Привязка меты: по uid, иначе (старый файл) по имени.
             let m = if e.uid != 0 {
                 meta.servers.iter().find(|m| m.uid == e.uid)
@@ -93,7 +99,10 @@ pub fn merge(sf: ServersFile, meta: SettingsFile) -> Merged {
                 u
             };
             ServerConfig {
-                id: (i as u64) + 1,
+                // Рантайм-CoreId = стабильный uid (НЕ позиция): переживает добавление/
+                // удаление/перепорядок серверов, поэтому окна/подписки/раскладку не
+                // приходится пересоздавать при изменении набора ядер.
+                id: uid,
                 uid,
                 name: e.name,
                 active: m.map(|m| m.active).unwrap_or(true),
@@ -132,6 +141,7 @@ pub fn merge(sf: ServersFile, meta: SettingsFile) -> Merged {
         chart_memory_percent,
         hotkeys,
         dirty,
+        chart_core_remap_needed,
     }
 }
 

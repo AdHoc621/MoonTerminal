@@ -85,6 +85,10 @@ pub struct AppConfig {
     pub theme: ChartTheme,
     /// Стиль линий ордеров (отдельный переносимый orders.toml).
     pub orders: OrdersStyle,
+    /// Рантайм-флаг (НЕ сериализуется): конфиг загружен из версии < `COREID_UID_VERSION`,
+    /// где `charts.json` хранил позиционные CoreId. UI на старте один раз перепривяжет их
+    /// к стабильным uid (см. `chart_persist::remap_core_ids`). Дефолт false.
+    pub chart_core_remap_needed: bool,
 }
 
 impl AppConfig {
@@ -119,6 +123,7 @@ impl AppConfig {
                 hotkeys: merged.hotkeys,
                 theme,
                 orders,
+                chart_core_remap_needed: merged.chart_core_remap_needed,
             };
             log::info!(
                 "конфиг: {} серверов, {} групп",
@@ -251,6 +256,7 @@ impl AppConfig {
             hotkeys: HotkeysConfig::default(),
             theme,
             orders,
+            chart_core_remap_needed: false,
         }))
     }
 

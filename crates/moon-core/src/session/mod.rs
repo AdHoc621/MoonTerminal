@@ -21,7 +21,7 @@ use std::time::Instant;
 use anyhow::{anyhow, Result};
 use moonproto::state::OrderBookKind;
 
-use crate::config::AppConfig;
+use crate::config::{AppConfig, ServerConfig};
 use crate::data::OrderBookModel;
 use crate::db::ReportTx;
 use crate::feed::{
@@ -34,7 +34,27 @@ pub struct CoreSession {
     pub id: CoreId,
     pub name: String,
     pub group: String,
+    /// Сигнатура connection-relevant полей (key/feed/synthetic), с которыми поднят
+    /// feed-поток. `reconcile` пере-поднимает ядро только если она изменилась —
+    /// смена имени/группы/рынка/цвета такого не требует.
+    conn_sig: u64,
     handle: FeedHandle,
+}
+
+/// Стабильный (в пределах процесса) хэш connection-relevant полей сервера. Меняется —
+/// нужно пере-поднять feed-поток. Имя/группа/рынок/цвет/связка/размеры сюда НЕ входят:
+/// их смена обновляется на месте без реконнекта.
+fn conn_sig(server: &ServerConfig) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    server.key.expose().hash(&mut h);
+    let f = server.feed;
+    [
+        f.orders, f.detects, f.reports, f.balance, f.strategies, f.log, f.alerts, f.arb,
+    ]
+    .hash(&mut h);
+    server.synthetic.hash(&mut h);
+    h.finish()
 }
 
 /// Сводка подключений для статус-бара: сколько ядер готово из общего числа +
@@ -122,6 +142,7 @@ impl SessionManager {
             let id = s.id;
             let name = s.name.clone();
             let group = s.group.clone();
+            let sig = conn_sig(&s);
             let handle = feed::spawn(
                 s,
                 config.chart_memory_percent,
@@ -134,6 +155,7 @@ impl SessionManager {
                 id,
                 name,
                 group,
+                conn_sig: sig,
                 handle,
             });
             log::info!("session up: core={id}");
@@ -156,6 +178,119 @@ impl SessionManager {
             pending_drop: HashMap::new(),
             last_cmd: HashMap::new(),
         }
+    }
+
+    /// Инкрементально приводит набор живых сессий к конфигу БЕЗ полного рестарта:
+    /// добавляет новые ядра, гасит удалённые/деактивированные, переподнимает только те,
+    /// у кого сменились connection-поля (key/feed/synthetic). Неизменные ядра не трогает —
+    /// их feed-поток, данные и подписки сохраняются (нет реконнект-флика и потери истории
+    /// при добавлении соседнего сервера). Имя/группу обновляет на месте.
+    ///
+    /// Заменяет прежний `SessionManager::start` в пути применения настроек: раньше любое
+    /// структурное изменение пере-поднимало ВСЕ ядра.
+    pub fn reconcile(&mut self, config: &AppConfig, reports: Option<&ReportTx>) {
+        let mem = config.chart_memory_percent;
+        let desired: Vec<ServerConfig> = config
+            .servers
+            .iter()
+            .filter(|s| s.active && config.group(&s.group).active)
+            .cloned()
+            .collect();
+        let desired_ids: HashSet<CoreId> = desired.iter().map(|s| s.id).collect();
+
+        // 1) Выбывшие ядра (удалены / сняли active / выключили группу) → погасить и вычистить.
+        let removed: Vec<CoreId> = self
+            .sessions
+            .iter()
+            .map(|s| s.id)
+            .filter(|id| !desired_ids.contains(id))
+            .collect();
+        for id in removed {
+            self.drop_core(id);
+        }
+
+        // 2) Новые ядра поднять, изменённые — переподнять, прочим обновить мету на месте.
+        for s in &desired {
+            let sig = conn_sig(s);
+            match self.sessions.iter().position(|x| x.id == s.id) {
+                None => self.spawn_core(s, sig, mem, reports),
+                Some(idx) => {
+                    self.sessions[idx].name = s.name.clone();
+                    self.sessions[idx].group = s.group.clone();
+                    if self.sessions[idx].conn_sig != sig {
+                        self.respawn_core(s, sig, mem, reports);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Поднять feed-поток нового ядра и зарегистрировать его.
+    fn spawn_core(&mut self, s: &ServerConfig, sig: u64, mem: u16, reports: Option<&ReportTx>) {
+        let id = s.id;
+        self.store.ensure(id);
+        let handle = feed::spawn(
+            s.clone(),
+            mem,
+            reports.cloned(),
+            self.feed_wake.clone(),
+            Some(self.market.clone()),
+        );
+        self.market_source.set_client(id, handle.client.clone());
+        self.sessions.push(CoreSession {
+            id,
+            name: s.name.clone(),
+            group: s.group.clone(),
+            conn_sig: sig,
+            handle,
+        });
+        log::info!("session up: core={id}");
+    }
+
+    /// Пере-поднять feed-поток существующего ядра (сменились connection-поля). Дроп
+    /// старого хэндла завершает старый поток; координация ядра сбрасывается под переизбор.
+    fn respawn_core(&mut self, s: &ServerConfig, sig: u64, mem: u16, reports: Option<&ReportTx>) {
+        let id = s.id;
+        let handle = feed::spawn(
+            s.clone(),
+            mem,
+            reports.cloned(),
+            self.feed_wake.clone(),
+            Some(self.market.clone()),
+        );
+        self.market_source.set_client(id, handle.client.clone());
+        if let Some(sess) = self.sessions.iter_mut().find(|x| x.id == id) {
+            sess.handle = handle;
+            sess.conn_sig = sig;
+            sess.name = s.name.clone();
+            sess.group = s.group.clone();
+        }
+        self.store.ensure(id);
+        if let Some(core) = self.store.core_mut(id) {
+            core.status = ConnStatus::Connecting;
+        }
+        self.core_key.remove(&id);
+        self.core_base.remove(&id);
+        self.core_provider.remove(&id);
+        self.providers.retain(|_, prov| *prov != id);
+        self.last_cmd.remove(&id);
+        log::info!("reconnect (config changed): core={id}");
+    }
+
+    /// Погасить ядро (сервер убран/деактивирован): дроп сессии завершает поток, чистим
+    /// аккаунтные данные, рыночного клиента и всю координацию.
+    fn drop_core(&mut self, id: CoreId) {
+        self.sessions.retain(|s| s.id != id); // дроп FeedHandle → поток завершится
+        self.store.remove(id);
+        self.market_source.remove_client(id);
+        self.core_key.remove(&id);
+        self.core_base.remove(&id);
+        self.core_provider.remove(&id);
+        self.providers.retain(|_, prov| *prov != id);
+        self.wanted.remove(&id);
+        self.pending_drop.retain(|(core, _), _| *core != id);
+        self.last_cmd.remove(&id);
+        log::info!("session down: core={id}");
     }
 
     /// Дренирует все каналы ядер. Аккаунтные сообщения → CoreStore; market-data
@@ -341,6 +476,7 @@ impl SessionManager {
         }
         let name = server.name.clone();
         let group = server.group.clone();
+        let sig = conn_sig(&server);
         let handle = feed::spawn(
             server,
             config.chart_memory_percent,
@@ -350,11 +486,17 @@ impl SessionManager {
         );
         self.market_source.set_client(id, handle.client.clone());
         match self.sessions.iter_mut().find(|s| s.id == id) {
-            Some(sess) => sess.handle = handle, // дроп старого хэндла → старый поток завершится
+            Some(sess) => {
+                sess.handle = handle; // дроп старого хэндла → старый поток завершится
+                sess.conn_sig = sig;
+                sess.name = name;
+                sess.group = group;
+            }
             None => self.sessions.push(CoreSession {
                 id,
                 name,
                 group,
+                conn_sig: sig,
                 handle,
             }),
         }

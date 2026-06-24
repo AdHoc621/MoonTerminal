@@ -251,6 +251,12 @@ impl CoreStore {
         self.cores.entry(id).or_default();
     }
 
+    /// Удалить аккаунтные данные ядра (сервер убран из конфига). Live-подписки/окна
+    /// чистит вызывающий (`SessionManager::reconcile`).
+    pub fn remove(&mut self, id: CoreId) {
+        self.cores.remove(&id);
+    }
+
     pub fn core(&self, id: CoreId) -> Option<&CoreData> {
         self.cores.get(&id)
     }

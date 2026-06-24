@@ -7,7 +7,7 @@
 //! Положение/зум самого чарта НЕ персистим: при загрузке вкладка пуста (нечего восстанавливать),
 //! а появившиеся монеты идут в live-follow.
 
-use moon_core::config::{ChartBucket, paths};
+use moon_core::config::{ChartBucket, ServerConfig, paths};
 use moon_core::session::CoreId;
 use serde::{Deserialize, Serialize};
 
@@ -82,6 +82,43 @@ impl ChartTabSpec {
             None => ChartBucket::Shared,
         })
     }
+}
+
+/// Одноразовый ремап legacy ПОЗИЦИОННЫХ CoreId (`Core(n)` / `core = n`) в стабильные
+/// uid. Запускается ровно один раз при апгрейде конфига с версии < `COREID_UID_VERSION`
+/// (флаг `AppConfig::chart_core_remap_needed`), пока порядок серверов в `servers.enc` ещё
+/// тот же, что был при записи `charts.json`. До v11 `n` означало позицию (1-based) ядра в
+/// списке серверов → берём `servers[n-1].uid`. Вне диапазона (вкладка осиротевшего ядра)
+/// оставляем как есть — живого ядра с таким id всё равно нет, вкладка останется пустой.
+///
+/// Идемпотентность держится снаружи (версия схемы): повторно НЕ вызывать на уже
+/// перемапленном файле, иначе uid воспримется как позиция и привязка поедет.
+pub fn remap_core_ids(specs: &mut [ChartTabSpec], servers: &[ServerConfig]) {
+    let pos_to_uid = |n: CoreId| -> Option<CoreId> {
+        // n — старый позиционный id (1-based) → сервер на этой позиции.
+        n.checked_sub(1)
+            .and_then(|i| servers.get(i as usize))
+            .map(|s| s.uid)
+    };
+    let mut remapped = 0usize;
+    for spec in specs.iter_mut() {
+        if let Some(ChartBucket::Core(n)) = spec.bucket {
+            if let Some(uid) = pos_to_uid(n) {
+                spec.bucket = Some(ChartBucket::Core(uid));
+                remapped += 1;
+            }
+        }
+        if let Some(n) = spec.core {
+            if let Some(uid) = pos_to_uid(n) {
+                spec.core = Some(uid);
+                remapped += 1;
+            }
+        }
+    }
+    log::info!(
+        "charts.json: ремап позиционных CoreId → uid ({remapped} вкладок, {} серверов)",
+        servers.len()
+    );
 }
 
 /// Загрузить из `charts.json` (нет/битый → пусто).
