@@ -148,3 +148,11 @@ chart.layout.orderbook:
   ru: "Стакан"
   en: "Order book"
   es: "Libro de órdenes"
+chart.layout.show_zone:
+  ru: "Отображать зону разделения"
+  en: "Show split zone"
+  es: "Mostrar zona de división"
+chart.layout.auto_pin:
+  ru: "Авто-пин при выставлении ордера"
+  en: "Auto-pin on order"
+  es: "Auto-fijar al poner orden"

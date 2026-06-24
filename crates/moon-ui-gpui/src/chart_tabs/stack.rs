@@ -92,6 +92,28 @@ pub(super) fn set_panels_orderbook_enabled<S: 'static>(
     }
 }
 
+/// Применить вкл/выкл заливки зоны управления ко всем панелям стека.
+pub(super) fn set_panels_show_zone<S: 'static>(
+    entries: &[ChartStackEntry],
+    show: bool,
+    cx: &mut Context<S>,
+) {
+    for e in entries {
+        e.panel.update(cx, |p, pcx| p.set_show_zone(show, pcx));
+    }
+}
+
+/// Применить вкл/выкл авто-пина при ордере ко всем панелям стека.
+pub(super) fn set_panels_auto_pin<S: 'static>(
+    entries: &[ChartStackEntry],
+    on: bool,
+    cx: &mut Context<S>,
+) {
+    for e in entries {
+        e.panel.update(cx, |p, pcx| p.set_auto_pin(on, pcx));
+    }
+}
+
 /// Убрать из стека панели без графиков. Возвращает true, если состав изменился.
 pub(super) fn retain_nonempty_panels(entries: &mut Vec<ChartStackEntry>, cx: &App) -> bool {
     let before = entries.len();

@@ -64,6 +64,13 @@ pub struct ChartTabSpec {
     /// хочет ни одно другое окно.
     #[serde(default)]
     pub orderbook_enabled: Option<bool>,
+    /// Показывать ли заливку зоны управления при раздельных зонах и скрытом стакане. None →
+    /// дефолт (вкл). Per-окно/вкладка, как `orderbook_enabled`.
+    #[serde(default)]
+    pub show_zone: Option<bool>,
+    /// Авто-пин графика при выставлении ордера. None → дефолт (выкл). Per-окно/вкладка.
+    #[serde(default)]
+    pub auto_pin: Option<bool>,
 }
 
 impl ChartTabSpec {

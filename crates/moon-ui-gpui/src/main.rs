@@ -98,6 +98,8 @@ pub(crate) struct ChartApplyAll {
     /// Копируем ВСЕ настройки вкладки-источника: масштаб цены + галка стакана.
     pub scale: Option<f32>,
     pub orderbook: Option<bool>,
+    pub show_zone: Option<bool>,
+    pub auto_pin: Option<bool>,
 }
 
 /// Общий backend: живёт в одном `Entity`, дренится таймером, будит окна по notify.

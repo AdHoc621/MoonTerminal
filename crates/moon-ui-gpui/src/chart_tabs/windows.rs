@@ -209,6 +209,8 @@ impl ChartTabs {
                     layout_height_fit: None,
                     layout_height_scroll: None,
                     orderbook_enabled: None,
+                    show_zone: None,
+                    auto_pin: None,
                 };
                 f(&mut s);
                 b.chart_specs.push(s);
@@ -404,15 +406,23 @@ impl DetachedChartHost {
                     s.layout_height_fit,
                     s.layout_height_scroll,
                     s.orderbook_enabled,
+                    s.show_zone,
+                    s.auto_pin,
                 )
             })
         });
-        if let Some((m, hf, hs, ob)) = saved {
+        if let Some((m, hf, hs, ob, sz, ap)) = saved {
             if m.is_some() || hf.is_some() || hs.is_some() {
                 panel.update(cx, |p, pcx| p.set_layout(m, hf, hs, pcx));
             }
             if ob.is_some() {
                 panel.update(cx, |p, pcx| p.set_orderbook_enabled(ob, pcx));
+            }
+            if sz.is_some() {
+                panel.update(cx, |p, pcx| p.set_show_zone(sz, pcx));
+            }
+            if ap.is_some() {
+                panel.update(cx, |p, pcx| p.set_auto_pin(ap, pcx));
             }
         }
         let layout_fit_input = cx.new(|cx| MoonInputState::new(window, cx));
@@ -539,6 +549,8 @@ impl DetachedChartHost {
         // Копируем ВСЕ настройки этого окна: + масштаб + галку стакана.
         let scale = self.panel.read(cx).scale();
         let orderbook = Some(self.panel.read(cx).orderbook_enabled().unwrap_or(true));
+        let show_zone = Some(self.panel.read(cx).show_zone().unwrap_or(true));
+        let auto_pin = Some(self.panel.read(cx).auto_pin().unwrap_or(false));
         self.backend.update(cx, |bk, bcx| {
             bk.chart_apply_all.push(crate::ChartApplyAll {
                 group,
@@ -548,6 +560,8 @@ impl DetachedChartHost {
                 height_scroll,
                 scale,
                 orderbook,
+                show_zone,
+                auto_pin,
             });
             bcx.notify();
         });
@@ -585,6 +599,8 @@ impl DetachedChartHost {
                     layout_height_fit: height_fit,
                     layout_height_scroll: height_scroll,
                     orderbook_enabled: None,
+                    show_zone: None,
+                    auto_pin: None,
                 });
             }
             bk.chart_specs_dirty = true;
@@ -616,10 +632,76 @@ impl DetachedChartHost {
                     layout_height_fit: None,
                     layout_height_scroll: None,
                     orderbook_enabled: Some(enabled),
+                    show_zone: None,
+                    auto_pin: None,
                 });
             }
             bk.chart_specs_dirty = true;
             bk.rebuild_orderbook_wanted();
+        });
+        cx.notify();
+    }
+
+    /// Вкл/выкл заливку зоны управления этой вкладки + persist.
+    fn apply_show_zone(&mut self, show: bool, cx: &mut Context<Self>) {
+        self.panel.update(cx, |p, c| p.set_show_zone(Some(show), c));
+        let (group, num, bucket) = (self.group.clone(), self.num, self.bucket.clone());
+        self.backend.update(cx, |bk, _| {
+            if let Some(s) = bk
+                .chart_specs
+                .iter_mut()
+                .find(|s| s.group == group && s.num == num && s.bucket() == bucket)
+            {
+                s.show_zone = Some(show);
+            } else {
+                bk.chart_specs.push(chart_persist::ChartTabSpec {
+                    group,
+                    num,
+                    core: None,
+                    bucket: Some(bucket),
+                    scale: None,
+                    detached: None,
+                    layout_mode: None,
+                    layout_height_fit: None,
+                    layout_height_scroll: None,
+                    orderbook_enabled: None,
+                    show_zone: Some(show),
+                    auto_pin: None,
+                });
+            }
+            bk.chart_specs_dirty = true;
+        });
+        cx.notify();
+    }
+
+    /// Вкл/выкл авто-пин при ордере этой вкладки + persist.
+    fn apply_auto_pin(&mut self, on: bool, cx: &mut Context<Self>) {
+        self.panel.update(cx, |p, c| p.set_auto_pin(Some(on), c));
+        let (group, num, bucket) = (self.group.clone(), self.num, self.bucket.clone());
+        self.backend.update(cx, |bk, _| {
+            if let Some(s) = bk
+                .chart_specs
+                .iter_mut()
+                .find(|s| s.group == group && s.num == num && s.bucket() == bucket)
+            {
+                s.auto_pin = Some(on);
+            } else {
+                bk.chart_specs.push(chart_persist::ChartTabSpec {
+                    group,
+                    num,
+                    core: None,
+                    bucket: Some(bucket),
+                    scale: None,
+                    detached: None,
+                    layout_mode: None,
+                    layout_height_fit: None,
+                    layout_height_scroll: None,
+                    orderbook_enabled: None,
+                    show_zone: None,
+                    auto_pin: Some(on),
+                });
+            }
+            bk.chart_specs_dirty = true;
         });
         cx.notify();
     }
@@ -689,9 +771,13 @@ impl Render for DetachedChartHost {
         let layout_popup = self.layout_popup_open.then(|| {
             let mode = self.panel_layout(cx).0.unwrap_or(StackLayoutMode::Fit);
             let orderbook_enabled = self.panel.read(cx).orderbook_enabled().unwrap_or(true);
+            let show_zone = self.panel.read(cx).show_zone().unwrap_or(true);
+            let auto_pin = self.panel.read(cx).auto_pin().unwrap_or(false);
             let pick_entity = cx.entity();
             let all_entity = cx.entity();
             let ob_entity = cx.entity();
+            let sz_entity = cx.entity();
+            let ap_entity = cx.entity();
             let hover_entity = cx.entity();
             let size = layout_popup::content_size(cx);
             div()
@@ -719,6 +805,8 @@ impl Render for DetachedChartHost {
                     &self.layout_fit_input,
                     &self.layout_scroll_input,
                     orderbook_enabled,
+                    show_zone,
+                    auto_pin,
                     p,
                     cx,
                     move |mode, app| {
@@ -744,6 +832,12 @@ impl Render for DetachedChartHost {
                     },
                     move |checked, app| {
                         ob_entity.update(app, |this, cx| this.apply_orderbook(checked, cx));
+                    },
+                    move |checked, app| {
+                        sz_entity.update(app, |this, cx| this.apply_show_zone(checked, cx));
+                    },
+                    move |checked, app| {
+                        ap_entity.update(app, |this, cx| this.apply_auto_pin(checked, cx));
                     },
                 ))
         });

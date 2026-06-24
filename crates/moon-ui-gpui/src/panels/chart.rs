@@ -13,7 +13,7 @@ use gpui::prelude::FluentBuilder;
 use gpui::*;
 use moon_ui::{
     MoonBackgroundPolicy, MoonButton, MoonButtonSize, MoonButtonVariant, MoonPalette, MoonRect,
-    Panel, PanelEvent,
+    Panel, PanelEvent, rgba_from,
 };
 
 use rust_i18n::t;
@@ -115,6 +115,11 @@ pub struct ChartPanel {
     /// Показывать ли стакан на графиках этой панели (per-окно, из настроек вкладки). Применяется
     /// в render (`set_orderbook_enabled` движка). Дефолт — вкл.
     orderbook_enabled: bool,
+    /// Показывать ли тусклую заливку зоны управления при раздельных зонах и СКРЫТОМ стакане
+    /// (per-окно/вкладка, из настроек попапа ⚙). Применяется в render. Дефолт — вкл.
+    show_zone: bool,
+    /// Авто-пин графика при выставлении ордера лонг/шорт (per-окно/вкладка). Дефолт — выкл.
+    auto_pin: bool,
     /// Номер AddToChart-вкладки (None = Main).
     num: Option<u32>,
     /// Рынки, владельцем которых является именно эта chart panel. Backend держит refcount
@@ -251,6 +256,8 @@ impl ChartPanel {
             market,
             scale: None,
             orderbook_enabled: true,
+            show_zone: true,
+            auto_pin: false,
             num: None,
             registered_markets,
             registered_orderbook,
@@ -335,6 +342,8 @@ impl ChartPanel {
             market: None,
             scale: None,
             orderbook_enabled: true,
+            show_zone: true,
+            auto_pin: false,
             num: Some(num),
             registered_markets: HashSet::new(),
             registered_orderbook: HashSet::new(),
@@ -413,6 +422,21 @@ impl ChartPanel {
             self.sync_orderbook_refs(cx);
             cx.notify();
         }
+    }
+
+    /// Показывать ли заливку зоны управления при скрытом стакане (per-окно). Только UI-оверлей,
+    /// движок не трогаем.
+    pub fn set_show_zone(&mut self, show: bool, cx: &mut Context<Self>) {
+        if self.show_zone != show {
+            self.show_zone = show;
+            cx.notify();
+        }
+    }
+
+    /// Авто-пин графика при выставлении ордера (per-окно). Только флаг; пин делается в
+    /// `try_place_order_click` при успешном ордере.
+    pub fn set_auto_pin(&mut self, on: bool, _cx: &mut Context<Self>) {
+        self.auto_pin = on;
     }
 
     /// AddToChart: открыть/продлить монету в этой панели с TTL.
@@ -652,8 +676,14 @@ impl ChartPanel {
         self.chart.chart_local_from_window_pos(pos)
     }
 
-    /// Настройка «Раздельные зоны управления»: ордера/линии только в зоне стакана.
+    /// Раздельные зоны управления (ордера/линии только в зоне стакана). На Add-вкладках и
+    /// выносных окнах (`num.is_some()`) — ВСЕГДА вкл: там всегда две зоны (стакан справа +
+    /// чарт слева, дабл-клик по чарту → на Main). Галка в Настройках управляет ТОЛЬКО
+    /// вкладкой Main (`num.is_none()`).
     fn separate_zones(&self, cx: &App) -> bool {
+        if self.num.is_some() {
+            return true;
+        }
         let b = self.backend.read(cx);
         b.preview
             .as_ref()
@@ -761,14 +791,33 @@ impl ChartPanel {
         self.local_pane_areas(pane).map(|(_, glass)| glass)
     }
 
+    /// Зона управления ордерами панели (device-px, как `chart_local`/`pane_rects`). Стакан
+    /// виден → его glass-полоса; стакан СКРЫТ → резервируем полосу той же ширины справа поверх
+    /// чарта, чтобы место под ордера (и риска границы) оставалось и при свёрнутом стакане.
+    fn control_zone_rect(&self, pane: usize) -> Option<moon_chart::view::Rect> {
+        if self.orderbook_enabled {
+            return self.local_glass_rect(pane).filter(|g| g.w > 0.0);
+        }
+        let rect = self.local_pane_rect(pane)?;
+        let time_axis_h = moon_chart::TIME_AXIS_H * self.last_ppp;
+        let plot_h = (rect.h - time_axis_h).max(1.0);
+        let w = moon_chart::GLASS_ZONE_PX.min(rect.w * 0.5);
+        Some(moon_chart::view::Rect {
+            x: rect.x + (rect.w - w).max(1.0),
+            y: rect.y,
+            w,
+            h: plot_h,
+        })
+    }
+
     fn glass_pane_at(&self, pos: (f32, f32)) -> Option<usize> {
         let pane = self.input.pane_at(pos.0, pos.1)?;
-        let glass = self.local_glass_rect(pane)?;
-        (glass.w > 0.0
-            && pos.0 >= glass.x
-            && pos.0 <= glass.x + glass.w
-            && pos.1 >= glass.y
-            && pos.1 <= glass.y + glass.h)
+        let zone = self.control_zone_rect(pane)?;
+        (zone.w > 0.0
+            && pos.0 >= zone.x
+            && pos.0 <= zone.x + zone.w
+            && pos.1 >= zone.y
+            && pos.1 <= zone.y + zone.h)
             .then_some(pane)
     }
 
@@ -865,7 +914,7 @@ impl ChartPanel {
             return false;
         };
 
-        self.backend.update(cx, |b, _| {
+        let placed = self.backend.update(cx, |b, _| {
             let cfg = b.preview.as_ref().unwrap_or(&b.config);
             let short = if Self::gesture_matches(
                 cfg.hotkeys.buy_set_click,
@@ -906,7 +955,19 @@ impl ChartPanel {
                     false
                 }
             }
-        })
+        });
+        // Авто-пин при выставлении ордера (per-окно/вкладка): успешный ордер закрепляет этот
+        // график, чтобы он не закрылся по TTL/неактивности, пока пользователь в позиции.
+        if placed
+            && self.auto_pin
+            && self.chart.pane_is_pinnable(pane)
+            && !self.chart.pane_pinned(pane)
+            && self.chart.toggle_pane_pin(pane)
+        {
+            self.view_dirty = true;
+            self.arm_ttl_timer(cx);
+        }
+        placed
     }
 
     fn hit_order_line(&self, pos: (f32, f32), cx: &mut Context<Self>) -> Option<OrderHit> {
@@ -1253,6 +1314,29 @@ impl Render for ChartPanel {
                 )
             })
             .collect();
+        // Риска зоны управления: при раздельных зонах И СКРЫТОМ стакане рисуем границу зоны
+        // ордеров (справа поверх чарта), чтобы было видно, где клики ставят ордера, а где
+        // дабл-клик уходит на Main. Стакан виден → его видно и так, риску не дублируем.
+        // (idx, left_лог, top_лог, w_лог, h_лог) — device-px из axis_panes делим на ppp, как ✕.
+        let show_zone_marker = self.show_zone && self.separate_zones(cx) && !self.orderbook_enabled;
+        let zone_markers: Vec<(usize, f32, f32, f32, f32)> = if show_zone_marker {
+            axis_panes
+                .iter()
+                .map(|(idx, rect, _)| {
+                    let zone_w = moon_chart::GLASS_ZONE_PX.min(rect.w * 0.5);
+                    let plot_h = (rect.h - moon_chart::TIME_AXIS_H * ppp).max(1.0);
+                    (
+                        *idx,
+                        (rect.x + rect.w - zone_w) / ppp,
+                        rect.y / ppp,
+                        zone_w / ppp,
+                        plot_h / ppp,
+                    )
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
         let show_empty_logo = axis_panes.is_empty();
         let (slot_w, _) = self.chart.slot_dev_size();
         let logo_w = ((slot_w as f32 / ppp) * 0.28).clamp(180.0, 280.0);
@@ -1674,6 +1758,16 @@ impl Render for ChartPanel {
                 .absolute()
                 .size_full()
             })
+            .children(zone_markers.into_iter().map(|(_idx, left, top, w, h)| {
+                // Тусклая заливка зоны управления (стакан скрыт) — без линии-границы.
+                div()
+                    .absolute()
+                    .left(px(left))
+                    .top(px(top))
+                    .w(px(w))
+                    .h(px(h))
+                    .bg(rgba_from(palette.blue, 0.03))
+            }))
             .children(close_btns.into_iter().map(|(idx, right, top)| {
                 let entity = cx.entity();
                 MoonButton::new(SharedString::from(format!("chart-close-{idx}")))

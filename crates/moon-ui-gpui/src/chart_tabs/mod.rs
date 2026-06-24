@@ -122,9 +122,18 @@ impl ChartTabs {
         // Из charts.json: масштаб Main (num=0) и список откреп-вкладок этой группы на
         // восстановление (создадим пустыми на первом render → ждут детект).
         #[allow(clippy::type_complexity)]
-        let (main_scale, main_layout, main_orderbook, restore_pending): (
+        let (
+            main_scale,
+            main_layout,
+            main_orderbook,
+            main_show_zone,
+            main_auto_pin,
+            restore_pending,
+        ): (
             Option<f32>,
             (Option<StackLayoutMode>, Option<u16>, Option<u16>),
+            Option<bool>,
+            Option<bool>,
             Option<bool>,
             Vec<_>,
         ) = {
@@ -135,12 +144,21 @@ impl ChartTabs {
                 (s.layout_mode, s.layout_height_fit, s.layout_height_scroll)
             });
             let main_orderbook = main_spec.and_then(|s| s.orderbook_enabled);
+            let main_show_zone = main_spec.and_then(|s| s.show_zone);
+            let main_auto_pin = main_spec.and_then(|s| s.auto_pin);
             let pending = specs
                 .iter()
                 .filter(|s| s.group == group && s.num >= 1 && s.detached.is_some())
                 .map(|s| (s.num, s.bucket(), s.detached.unwrap(), s.scale))
                 .collect();
-            (main_scale, main_layout, main_orderbook, pending)
+            (
+                main_scale,
+                main_layout,
+                main_orderbook,
+                main_show_zone,
+                main_auto_pin,
+                pending,
+            )
         };
         if main_scale.is_some() {
             main.update(cx, |p, pcx| p.set_scale(main_scale, pcx));
@@ -152,6 +170,12 @@ impl ChartTabs {
         }
         if main_orderbook.is_some() {
             main.update(cx, |p, pcx| p.set_orderbook_enabled(main_orderbook, pcx));
+        }
+        if main_show_zone.is_some() {
+            main.update(cx, |p, pcx| p.set_show_zone(main_show_zone, pcx));
+        }
+        if main_auto_pin.is_some() {
+            main.update(cx, |p, pcx| p.set_auto_pin(main_auto_pin, pcx));
         }
         cx.observe(&backend, |this, backend, cx| {
             // Запросы «применить ко всем» из выносных окон — до early-return по sig (они sig не меняют).
@@ -428,6 +452,32 @@ impl ChartTabs {
         v.unwrap_or(true)
     }
 
+    /// Заливка зоны управления включена на активной вкладке (None → дефолт вкл).
+    fn active_show_zone(&self, cx: &App) -> bool {
+        let v = match &self.active {
+            Tab::Main => self.main.read(cx).show_zone(),
+            Tab::Add(n, b) => self
+                .add
+                .iter()
+                .find(|(num, bk, _)| num == n && bk == b)
+                .and_then(|(_, _, p)| p.read(cx).show_zone()),
+        };
+        v.unwrap_or(true)
+    }
+
+    /// Авто-пин при ордере включён на активной вкладке (None → дефолт выкл).
+    fn active_auto_pin(&self, cx: &App) -> bool {
+        let v = match &self.active {
+            Tab::Main => self.main.read(cx).auto_pin(),
+            Tab::Add(n, b) => self
+                .add
+                .iter()
+                .find(|(num, bk, _)| num == n && bk == b)
+                .and_then(|(_, _, p)| p.read(cx).auto_pin()),
+        };
+        v.unwrap_or(false)
+    }
+
     /// Масштаб цены активной вкладки (None = Авто).
     fn active_scale_value(&self, cx: &App) -> Option<f32> {
         match &self.active {
@@ -459,6 +509,42 @@ impl ChartTabs {
         });
         // Stage 2: пересобрать набор рынков, которым нужен стакан (мог измениться спрос).
         self.backend.update(cx, |b, _| b.rebuild_orderbook_wanted());
+        cx.notify();
+    }
+
+    /// Вкл/выкл заливку зоны управления на АКТИВНОЙ вкладке + persist.
+    fn apply_show_zone(&mut self, show: bool, cx: &mut Context<Self>) {
+        match self.active.clone() {
+            Tab::Main => self.main.update(cx, |s, c| s.set_show_zone(Some(show), c)),
+            Tab::Add(n, b) => {
+                if let Some((_, _, p)) = self.add.iter().find(|(num, bk, _)| *num == n && *bk == b)
+                {
+                    p.update(cx, |s, c| s.set_show_zone(Some(show), c));
+                }
+            }
+        }
+        let (num, bucket) = self.active_stack_key();
+        self.upsert_spec(cx, num, &bucket, move |s| {
+            s.show_zone = Some(show);
+        });
+        cx.notify();
+    }
+
+    /// Вкл/выкл авто-пин при ордере на АКТИВНОЙ вкладке + persist.
+    fn apply_auto_pin(&mut self, on: bool, cx: &mut Context<Self>) {
+        match self.active.clone() {
+            Tab::Main => self.main.update(cx, |s, c| s.set_auto_pin(Some(on), c)),
+            Tab::Add(n, b) => {
+                if let Some((_, _, p)) = self.add.iter().find(|(num, bk, _)| *num == n && *bk == b)
+                {
+                    p.update(cx, |s, c| s.set_auto_pin(Some(on), c));
+                }
+            }
+        }
+        let (num, bucket) = self.active_stack_key();
+        self.upsert_spec(cx, num, &bucket, move |s| {
+            s.auto_pin = Some(on);
+        });
         cx.notify();
     }
 
@@ -503,14 +589,20 @@ impl ChartTabs {
         height_scroll: Option<u16>,
         scale: Option<f32>,
         orderbook: Option<bool>,
+        show_zone: Option<bool>,
+        auto_pin: Option<bool>,
         cx: &mut Context<Self>,
     ) {
         let ob = orderbook.unwrap_or(true);
+        let sz = show_zone.unwrap_or(true);
+        let ap = auto_pin.unwrap_or(false);
         if include_main {
             self.main.update(cx, |s, c| {
                 s.set_layout(mode, height_fit, height_scroll, c);
                 s.set_scale(scale, c);
                 s.set_orderbook_enabled(Some(ob), c);
+                s.set_show_zone(Some(sz), c);
+                s.set_auto_pin(Some(ap), c);
             });
             self.upsert_spec(cx, 0, &ChartBucket::Shared, |s| {
                 s.layout_mode = mode;
@@ -518,6 +610,8 @@ impl ChartTabs {
                 s.layout_height_scroll = height_scroll;
                 s.scale = scale;
                 s.orderbook_enabled = Some(ob);
+                s.show_zone = Some(sz);
+                s.auto_pin = Some(ap);
             });
         }
         // «Чарты» = add-вкладки в стрипе + откреплённые в окна (их стеки держим в self.detached).
@@ -532,6 +626,8 @@ impl ChartTabs {
                 s.set_layout(mode, height_fit, height_scroll, c);
                 s.set_scale(scale, c);
                 s.set_orderbook_enabled(Some(ob), c);
+                s.set_show_zone(Some(sz), c);
+                s.set_auto_pin(Some(ap), c);
             });
             self.upsert_spec(cx, num, &bucket, |s| {
                 s.layout_mode = mode;
@@ -539,6 +635,8 @@ impl ChartTabs {
                 s.layout_height_scroll = height_scroll;
                 s.scale = scale;
                 s.orderbook_enabled = Some(ob);
+                s.show_zone = Some(sz);
+                s.auto_pin = Some(ap);
             });
         }
         self.backend.update(cx, |b, _| b.rebuild_orderbook_wanted());
@@ -563,6 +661,8 @@ impl ChartTabs {
                 r.height_scroll,
                 r.scale,
                 r.orderbook,
+                r.show_zone,
+                r.auto_pin,
                 cx,
             );
         }
@@ -665,7 +765,7 @@ impl ChartTabs {
                     AddChartStack::new(backend.clone(), n, bucket.clone(), epoch, theme.clone())
                 });
                 // Восстановить сохранённый масштаб и раскладку этой вкладки (charts.json).
-                let (saved_scale, saved_layout, saved_orderbook) = {
+                let (saved_scale, saved_layout, saved_orderbook, saved_show_zone, saved_auto_pin) = {
                     let specs = &self.backend.read(cx).chart_specs;
                     let spec = specs
                         .iter()
@@ -676,6 +776,8 @@ impl ChartTabs {
                             (s.layout_mode, s.layout_height_fit, s.layout_height_scroll)
                         }),
                         spec.and_then(|s| s.orderbook_enabled),
+                        spec.and_then(|s| s.show_zone),
+                        spec.and_then(|s| s.auto_pin),
                     )
                 };
                 if saved_scale.is_some() {
@@ -689,6 +791,12 @@ impl ChartTabs {
                 }
                 if saved_orderbook.is_some() {
                     panel.update(cx, |p, pcx| p.set_orderbook_enabled(saved_orderbook, pcx));
+                }
+                if saved_show_zone.is_some() {
+                    panel.update(cx, |p, pcx| p.set_show_zone(saved_show_zone, pcx));
+                }
+                if saved_auto_pin.is_some() {
+                    panel.update(cx, |p, pcx| p.set_auto_pin(saved_auto_pin, pcx));
                 }
                 panel.update(cx, |p, pcx| p.add_coin(core, &market, ttl, pcx));
                 self.add.push((n, bucket.clone(), panel));

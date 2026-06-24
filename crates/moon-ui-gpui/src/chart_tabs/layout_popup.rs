@@ -45,6 +45,10 @@ pub(super) fn content_size(cx: &App) -> Size<Pixels> {
         + 2.0 * cap
         + gap
         + cb_h
+        + gap
+        + cb_h
+        + gap
+        + cb_h
         + 6.0;
     let w = 2.0 * 110.0 + 20.0 + 2.0 * pad + border;
     size(px(w), px(h))
@@ -61,23 +65,29 @@ fn mode_label(m: StackLayoutMode) -> &'static str {
 /// `height_fit_input`/`height_scroll_input` — раздельные поля (подписку на Blur/Enter держит
 /// вызывающий). `on_pick_mode` вызывается при выборе режима. Позиционируется вызывающим.
 #[allow(clippy::too_many_arguments)]
-pub(super) fn render_layout_popup<F, G, H>(
+pub(super) fn render_layout_popup<F, G, H, I, J>(
     id: &str,
     current: StackLayoutMode,
     height_fit_input: &Entity<MoonInputState>,
     height_scroll_input: &Entity<MoonInputState>,
     orderbook_enabled: bool,
+    show_zone: bool,
+    auto_pin: bool,
     p: MoonPalette,
     cx: &App,
     on_pick_mode: F,
     apply_all_label: String,
     on_apply_all: G,
     on_toggle_orderbook: H,
+    on_toggle_show_zone: I,
+    on_toggle_auto_pin: J,
 ) -> AnyElement
 where
     F: Fn(StackLayoutMode, &mut App) + 'static,
     G: Fn(&mut App) + 'static,
     H: Fn(bool, &mut App) + 'static,
+    I: Fn(bool, &mut App) + 'static,
+    J: Fn(bool, &mut App) + 'static,
 {
     let sel = POPUP_MODES.iter().position(|m| *m == current).unwrap_or(0);
     let items: Vec<MoonSegmentItem> = POPUP_MODES
@@ -142,6 +152,20 @@ where
         .size(MoonCheckboxSize::Compact)
         .on_change(move |ch: &bool, _w, app| on_toggle_orderbook(*ch, app));
 
+    // Чекбокс «Отображать зону разделения» — тусклая заливка зоны ордеров при скрытом стакане.
+    let show_zone_cb = MoonCheckbox::new(SharedString::from(format!("{id}-show-zone")))
+        .label(t!("chart.layout.show_zone").to_string())
+        .checked(show_zone)
+        .size(MoonCheckboxSize::Compact)
+        .on_change(move |ch: &bool, _w, app| on_toggle_show_zone(*ch, app));
+
+    // Чекбокс «Авто-пин при ордере» — закреплять график при выставлении ордера лонг/шорт.
+    let auto_pin_cb = MoonCheckbox::new(SharedString::from(format!("{id}-auto-pin")))
+        .label(t!("chart.layout.auto_pin").to_string())
+        .checked(auto_pin)
+        .size(MoonCheckboxSize::Compact)
+        .on_change(move |ch: &bool, _w, app| on_toggle_auto_pin(*ch, app));
+
     // Иконка «применить ко всем» — справа в строке заголовка, только символ + всплывающая подсказка
     // (текст области: ко всем окнам / только чартам).
     let apply_all_btn = MoonButton::new(SharedString::from(format!("{id}-apply-all")))
@@ -180,6 +204,8 @@ where
         .child(height_line)
         .child(hint_block)
         .child(orderbook_cb)
+        .child(show_zone_cb)
+        .child(auto_pin_cb)
         .into_any_element()
 }
 

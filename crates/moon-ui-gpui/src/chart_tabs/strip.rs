@@ -179,6 +179,8 @@ impl Render for ChartTabs {
             let p = MoonPalette::active(cx);
             let mode = self.active_layout_mode(cx).unwrap_or(StackLayoutMode::Fit);
             let orderbook_enabled = self.active_orderbook_enabled(cx);
+            let show_zone = self.active_show_zone(cx);
+            let auto_pin = self.active_auto_pin(cx);
             let include_main = matches!(self.active, Tab::Main);
             let apply_all_label = if include_main {
                 t!("chart.layout.apply_all_windows").to_string()
@@ -188,6 +190,8 @@ impl Render for ChartTabs {
             let pick_entity = cx.entity();
             let all_entity = cx.entity();
             let ob_entity = cx.entity();
+            let sz_entity = cx.entity();
+            let ap_entity = cx.entity();
             let hover_entity = cx.entity();
             let size = layout_popup::content_size(cx);
             div()
@@ -215,6 +219,8 @@ impl Render for ChartTabs {
                     &self.layout_fit_input,
                     &self.layout_scroll_input,
                     orderbook_enabled,
+                    show_zone,
+                    auto_pin,
                     p,
                     cx,
                     move |mode, app| {
@@ -234,11 +240,29 @@ impl Render for ChartTabs {
                             // Копируем ВСЕ настройки активной вкладки: + масштаб + галку стакана.
                             let scale = this.active_scale_value(cx);
                             let ob = Some(this.active_orderbook_enabled(cx));
-                            this.apply_layout_to_all(include_main, mode, hf, hs, scale, ob, cx);
+                            let sz = Some(this.active_show_zone(cx));
+                            let ap = Some(this.active_auto_pin(cx));
+                            this.apply_layout_to_all(
+                                include_main,
+                                mode,
+                                hf,
+                                hs,
+                                scale,
+                                ob,
+                                sz,
+                                ap,
+                                cx,
+                            );
                         });
                     },
                     move |checked, app| {
                         ob_entity.update(app, |this, cx| this.apply_orderbook(checked, cx));
+                    },
+                    move |checked, app| {
+                        sz_entity.update(app, |this, cx| this.apply_show_zone(checked, cx));
+                    },
+                    move |checked, app| {
+                        ap_entity.update(app, |this, cx| this.apply_auto_pin(checked, cx));
                     },
                 ))
         });

@@ -9,7 +9,7 @@ use moon_ui::MoonVirtualListScrollHandle;
 
 use super::stack::{
     ChartStackEntry, render_chart_stack, resolve_layout, retain_nonempty_panels,
-    set_panels_orderbook_enabled, set_panels_scale,
+    set_panels_auto_pin, set_panels_orderbook_enabled, set_panels_scale, set_panels_show_zone,
 };
 use crate::Backend;
 use crate::chart_persist::StackLayoutMode;
@@ -38,6 +38,10 @@ pub(crate) struct MainChartStack {
     layout_height_scroll: Option<u16>,
     /// Показывать ли стакан на графиках вкладки (per-окно). None = дефолт (вкл).
     orderbook_enabled: Option<bool>,
+    /// Показывать ли заливку зоны управления (per-окно). None = дефолт (вкл).
+    show_zone: Option<bool>,
+    /// Авто-пин графика при выставлении ордера (per-окно). None = дефолт (выкл).
+    auto_pin: Option<bool>,
     /// Армирован ли one-shot таймер авто-закрытия по неактивности (config `main_idle_close_secs`).
     /// Тикает ~1 Гц, пока фича включена и есть графики; сам пере-армится. См. `arm_idle_timer`.
     idle_timer_armed: bool,
@@ -66,6 +70,8 @@ impl MainChartStack {
             layout_height_fit: None,
             layout_height_scroll: None,
             orderbook_enabled: None,
+            show_zone: None,
+            auto_pin: None,
             idle_timer_armed: false,
             scroll: MoonVirtualListScrollHandle::new(),
         };
@@ -100,6 +106,12 @@ impl MainChartStack {
         }
         if let Some(en) = self.orderbook_enabled {
             panel.update(cx, |panel, pcx| panel.set_orderbook_enabled(en, pcx));
+        }
+        if let Some(sz) = self.show_zone {
+            panel.update(cx, |panel, pcx| panel.set_show_zone(sz, pcx));
+        }
+        if let Some(ap) = self.auto_pin {
+            panel.update(cx, |panel, pcx| panel.set_auto_pin(ap, pcx));
         }
         panel
     }
@@ -281,6 +293,34 @@ impl MainChartStack {
         }
         self.orderbook_enabled = enabled;
         set_panels_orderbook_enabled(&self.charts, enabled.unwrap_or(true), cx);
+        cx.notify();
+    }
+
+    pub(crate) fn show_zone(&self) -> Option<bool> {
+        self.show_zone
+    }
+
+    /// Вкл/выкл заливку зоны управления для всех графиков стека (per-окно).
+    pub(crate) fn set_show_zone(&mut self, show: Option<bool>, cx: &mut Context<Self>) {
+        if self.show_zone == show {
+            return;
+        }
+        self.show_zone = show;
+        set_panels_show_zone(&self.charts, show.unwrap_or(true), cx);
+        cx.notify();
+    }
+
+    pub(crate) fn auto_pin(&self) -> Option<bool> {
+        self.auto_pin
+    }
+
+    /// Вкл/выкл авто-пин при ордере для всех графиков стека (per-окно).
+    pub(crate) fn set_auto_pin(&mut self, on: Option<bool>, cx: &mut Context<Self>) {
+        if self.auto_pin == on {
+            return;
+        }
+        self.auto_pin = on;
+        set_panels_auto_pin(&self.charts, on.unwrap_or(false), cx);
         cx.notify();
     }
 
