@@ -32,6 +32,9 @@ bytemuck = { version = "1", features = ["derive"] }
 gpui = { package = "moon-gpui", git = "https://github.com/Moonbot-Tech/MoonUI", branch = "master" }
 gpui_platform = { package = "moon-gpui-platform", git = "https://github.com/Moonbot-Tech/MoonUI", branch = "master", features = ["font-kit"] }
 moon-ui = { package = "moon-ui", git = "https://github.com/Moonbot-Tech/MoonUI", branch = "master" }
+# Встроенные SVG-иконки MoonUI (RustEmbed). Регистрируем как gpui AssetSource (`with_assets`),
+# иначе `IconName::*`-иконки (напр. крестик очистки `cleanable`) не находят svg и рисуются пусто.
+moon-ui-components-assets = { package = "moon-ui-components-assets", git = "https://github.com/Moonbot-Tech/MoonUI", branch = "master" }
 
 anyhow = "1"
 log = "0.4"

@@ -191,7 +191,7 @@ impl Render for ChartTabs {
         let coin_search_el = div()
             .relative()
             .child(
-                div().w(px(140.0)).child(
+                div().w(px(80.0)).child(
                     MoonInput::new("tabs-coin-search")
                         .state(&self.coin_input)
                         .cleanable(true)

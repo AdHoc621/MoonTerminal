@@ -902,7 +902,7 @@ impl Render for DetachedChartHost {
         });
         // Поле ввода монеты (поиск) шапки + список совпадений. Список рисуем на уровне v_flex
         // (после тела), иначе тело окна (paint-порядок ниже) перекроет выпадашку из шапки.
-        let coin_search_el = div().w(px(140.0)).child(
+        let coin_search_el = div().w(px(80.0)).child(
             MoonInput::new("detached-coin-search")
                 .state(&self.coin_input)
                 .cleanable(true)

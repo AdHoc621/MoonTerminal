@@ -720,7 +720,9 @@ fn main() -> anyhow::Result<()> {
     // Единая точка отсчёта времени для сессий и чарт-вью (как epoch_ms в egui).
     let epoch = moon_chart::paint::now_unix_ms();
 
-    let app = gpui_platform::application();
+    // Регистрируем встроенные SVG-иконки MoonUI как AssetSource — без этого `IconName::*`
+    // (напр. крестик очистки `cleanable` = CircleX) не находят svg и рисуются пустыми.
+    let app = gpui_platform::application().with_assets(moon_ui_components_assets::Assets);
     app.run(move |cx| {
         init_moon_ui(cx);
         install_moon_theme_for_config(&cfg, cx);
