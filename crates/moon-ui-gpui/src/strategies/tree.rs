@@ -41,13 +41,26 @@ impl StrategiesView {
                 .iter()
                 .filter(|r| self.filter.counts(r) && r.checked)
                 .count();
-            let label = format!(
-                "{}  {}  {}/{}",
-                if open { "▼" } else { "▶" },
-                core_name,
-                active,
-                total
-            );
+            // Итого открытых ордеров по всему ядру (как у стратегий: 0 → не показываем).
+            let open_orders_total = cd.orders.iter().filter(|o| !o.job_is_done).count();
+            let label = if open_orders_total > 0 {
+                format!(
+                    "{}  {}  {}/{}  ({})",
+                    if open { "▼" } else { "▶" },
+                    core_name,
+                    active,
+                    total,
+                    open_orders_total
+                )
+            } else {
+                format!(
+                    "{}  {}  {}/{}",
+                    if open { "▼" } else { "▶" },
+                    core_name,
+                    active,
+                    total
+                )
+            };
             let cid = *core_id;
             let core_dnd_bg = moon_alpha(p.panel, 0.85);
             list = list.child(
@@ -85,6 +98,15 @@ impl StrategiesView {
             if !open {
                 continue;
             }
+            // Открытые ордера ядра по стратегиям (strat_id → кол-во) — для плашки
+            // «вид(N)» справа в строке. Считаем один раз на ядро (не O(строки×ордера)).
+            let order_counts: std::collections::HashMap<u64, usize> = {
+                let mut m = std::collections::HashMap::new();
+                for o in cd.orders.iter().filter(|o| !o.job_is_done) {
+                    *m.entry(o.strat_id).or_insert(0) += 1;
+                }
+                m
+            };
             // Вложенное дерево папок (отступ слева — как egui ui.indent).
             let mut root = build_node(cd.strategies.iter().filter(|r| self.filter.matches(r)));
             // Подмешиваем пустые UI-папки (созданные, ещё без стратегий).
@@ -100,6 +122,7 @@ impl StrategiesView {
                 &mut prefix,
                 force_open,
                 order,
+                &order_counts,
                 built,
                 &mut kids,
                 cx,
@@ -129,7 +152,8 @@ impl StrategiesView {
         let cores_owned: Arc<Vec<(CoreId, String)>> = Arc::new(cores.to_vec());
 
         v_flex()
-            .w(px(380.0))
+            // +10% к 380 — чтобы справа влезала плашка «вид(N)» с числом ордеров.
+            .w(px(418.0))
             .h_full()
             .bg(moon(p.shell_high))
             .font_family(design::mono())
@@ -379,6 +403,7 @@ impl StrategiesView {
         prefix: &mut Vec<String>,
         force_open: bool,
         order: &Arc<Vec<Key>>,
+        order_counts: &std::collections::HashMap<u64, usize>,
         built: &mut Vec<Key>,
         out: &mut Vec<AnyElement>,
         cx: &Context<Self>,
@@ -462,7 +487,16 @@ impl StrategiesView {
             if fopen {
                 let mut kids: Vec<AnyElement> = Vec::new();
                 self.render_node(
-                    child, strategies, core_id, prefix, force_open, order, built, &mut kids, cx,
+                    child,
+                    strategies,
+                    core_id,
+                    prefix,
+                    force_open,
+                    order,
+                    order_counts,
+                    built,
+                    &mut kids,
+                    cx,
                 );
                 let mut body = v_flex().w_full().pl_3().gap_0();
                 for k in kids {
@@ -473,7 +507,8 @@ impl StrategiesView {
             prefix.pop();
         }
         for r in &node.strategies {
-            out.push(self.strategy_row(core_id, r, order, built, cx));
+            let open_orders = order_counts.get(&r.id).copied().unwrap_or(0);
+            out.push(self.strategy_row(core_id, r, order, open_orders, built, cx));
         }
     }
 
@@ -483,6 +518,7 @@ impl StrategiesView {
         core: CoreId,
         r: &StrategyRow,
         order: &Arc<Vec<Key>>,
+        open_orders: usize,
         built: &mut Vec<Key>,
         cx: &Context<Self>,
     ) -> AnyElement {
@@ -542,7 +578,12 @@ impl StrategiesView {
                         div()
                             .text_size(design::t_body(cx))
                             .text_color(moon(type_col))
-                            .child(r.kind.clone()),
+                            // 0 ордеров → без «(N)», только название вида.
+                            .child(if open_orders > 0 {
+                                format!("{}({})", r.kind, open_orders)
+                            } else {
+                                r.kind.clone()
+                            }),
                     ),
             )
             .on_click(cx.listener(move |this, e: &ClickEvent, window, cx| {

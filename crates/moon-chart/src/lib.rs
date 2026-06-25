@@ -443,6 +443,7 @@ mod tests {
             price: 61_000.0,
             fill_pct: 0.0,
             strat: "test".into(),
+            strat_id: 0,
             uid: 42,
             emulator: false,
             job_is_done: false,

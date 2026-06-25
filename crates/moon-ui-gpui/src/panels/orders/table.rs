@@ -2,11 +2,13 @@
 
 use super::*;
 use moon_core::feed::OrderStopKind;
+use moon_ui::{MoonBadge, MoonBadgeSize, MoonBadgeVariant};
 use rust_i18n::t;
 
 pub(super) fn orders_table(
     rows: Rc<Vec<OrderEntry>>,
     columns: u16,
+    state: &Entity<MoonDataTableState>,
     cx: &Context<OrdersPanel>,
 ) -> impl IntoElement {
     let empty = rows.is_empty();
@@ -34,6 +36,7 @@ pub(super) fn orders_table(
             order_table_row(&table_rows[ix], &view, p, &row_cols)
         })
         .columns(visible.iter().map(|c| column_def(*c)).collect::<Vec<_>>())
+        .state(state)
         .header_height(design::TABLE_HEAD_H)
         .row_height(design::TABLE_ROW_H),
     )
@@ -48,12 +51,15 @@ pub(super) fn col_title(col: OrdCol) -> String {
         OrdCol::Side => t!("orders.col.side").to_string(),
         OrdCol::Token => t!("orders.col.token").to_string(),
         OrdCol::CurP => t!("orders.col.price").to_string(),
+        OrdCol::Status => "Status".to_string(),
         OrdCol::Size => "Size".to_string(),
         OrdCol::Sl => "SL".to_string(),
         OrdCol::Ts => "TS".to_string(),
         OrdCol::Vstop => "Vstop".to_string(),
         OrdCol::Buy => "Buy".to_string(),
         OrdCol::Fill => "Fill".to_string(),
+        OrdCol::Pnl => "PNL".to_string(),
+        OrdCol::Tp => "TP".to_string(),
         OrdCol::Strat => "Strat".to_string(),
     }
 }
@@ -65,6 +71,7 @@ fn column_def(col: OrdCol) -> MoonDataTableColumn {
     match col {
         OrdCol::Core => MoonDataTableColumn::new("core", title, 90.0),
         OrdCol::Side => MoonDataTableColumn::new("side", title, 60.0),
+        OrdCol::Status => MoonDataTableColumn::new("status", title, 76.0),
         OrdCol::Token => numeric_column("token", title, 70.0),
         OrdCol::Size => numeric_column("size", title, 70.0),
         OrdCol::Sl => MoonDataTableColumn::new("sl", title, 46.0),
@@ -73,6 +80,8 @@ fn column_def(col: OrdCol) -> MoonDataTableColumn {
         OrdCol::Buy => numeric_column("buy", title, 80.0),
         OrdCol::CurP => numeric_column("cur.p", title, 86.0),
         OrdCol::Fill => numeric_column("fill", title, 56.0),
+        OrdCol::Pnl => numeric_column("pnl", title, 72.0),
+        OrdCol::Tp => numeric_column("tp", title, 80.0),
         OrdCol::Strat => numeric_column("strat", title, 90.0),
     }
 }
@@ -104,6 +113,7 @@ fn cell_for(col: OrdCol, e: &OrderEntry, view: &Entity<OrdersPanel>, p: MoonPale
             let (side, tone) = side_label(r);
             MoonDataCell::text(side).tone(tone).weight(500.0)
         }
+        OrdCol::Status => MoonDataCell::element(status_cell(r, p)),
         OrdCol::Token => MoonDataCell::element(token_cell(e, view, p)),
         OrdCol::Size => MoonDataCell::text(num(r.size)),
         OrdCol::Sl => flag_toggle_cell(e, view, OrderStopKind::StopLoss, r.sl_on, p),
@@ -112,19 +122,22 @@ fn cell_for(col: OrdCol, e: &OrderEntry, view: &Entity<OrdersPanel>, p: MoonPale
         OrdCol::Buy => MoonDataCell::text(num(r.buy_price)),
         OrdCol::CurP => MoonDataCell::text(num(r.price as f64)),
         OrdCol::Fill => MoonDataCell::text(format!("{:.0}%", r.fill_pct)).tone(MoonTone::Muted),
+        OrdCol::Pnl => pnl_cell(r),
+        OrdCol::Tp => tp_cell(r),
         OrdCol::Strat => MoonDataCell::text(r.strat.clone()).tone(MoonTone::Muted),
     }
 }
 
-/// Отображаемая сторона и её тон: SELL (исполненный лонг) — синим, SHORT — красным,
-/// BUY (ждёт) — зелёным; эмулятор → суффикс `(E)`.
+/// Отображаемая сторона и её тон (baseline UI Kit): SELL (исполненный лонг) — синим
+/// (`Info`/tp), SHORT — красным (`Danger`/sl), BUY (ждёт) — оранжевым (`Negative`/order);
+/// эмулятор → суффикс `(E)`.
 fn side_label(r: &OrderRow) -> (String, MoonTone) {
     let (side, tone) = if is_sell(r) {
         ("SELL", MoonTone::Info)
     } else if r.is_short {
         ("SHORT", MoonTone::Danger)
     } else {
-        ("BUY", MoonTone::Positive)
+        ("BUY", MoonTone::Negative)
     };
     let side = if r.emulator {
         format!("{side}(E)")
@@ -132,6 +145,76 @@ fn side_label(r: &OrderRow) -> (String, MoonTone) {
         side.to_string()
     };
     (side, tone)
+}
+
+/// Статус ордера (baseline status-badge): `filled` — исполнен (серый), `pending` —
+/// ждёт условие (амбер), `live` — рабочий/частично исполнен (зелёный).
+fn order_status(r: &OrderRow) -> (&'static str, MoonTone) {
+    if r.fill_pct >= 99.95 {
+        ("filled", MoonTone::Muted)
+    } else if r.pending {
+        ("pending", MoonTone::Warning)
+    } else {
+        ("live", MoonTone::Positive)
+    }
+}
+
+/// Ячейка статуса — `MoonBadge` Outline/Status (пилюля как в `5Badges`/`8tablecells`).
+fn status_cell(r: &OrderRow, p: MoonPalette) -> impl IntoElement + 'static {
+    let (label, tone) = order_status(r);
+    div().h_full().flex().items_center().child(
+        MoonBadge::new(label)
+            .tone(tone)
+            .variant(MoonBadgeVariant::Outline)
+            .size(MoonBadgeSize::Status)
+            .render_with_palette(p),
+    )
+}
+
+/// Локальная оценка нереализованного PnL по исполненной части позиции:
+/// `(mark − entry) · filled_qty · dir`. Серверного PnL в `OrderRow` нет (как и в
+/// «Активах» — считаем сами). `None`, если позиции нет (нет исполнения) или входные
+/// цены не выставлены. Для шорта вход — `sell_price`, для лонга — `buy_price`.
+fn order_pnl(r: &OrderRow) -> Option<f64> {
+    let filled_qty = r.size * (r.fill_pct as f64) / 100.0;
+    if filled_qty <= 0.0 {
+        return None;
+    }
+    let entry = if r.is_short { r.sell_price } else { r.buy_price };
+    let mark = r.price as f64;
+    if entry <= 0.0 || mark <= 0.0 {
+        return None;
+    }
+    let dir = if r.is_short { -1.0 } else { 1.0 };
+    Some((mark - entry) * filled_qty * dir)
+}
+
+/// PnL-ячейка: colored delta (зелёный/красный, со знаком), `–` если позиции нет.
+fn pnl_cell(r: &OrderRow) -> MoonDataCell {
+    match order_pnl(r) {
+        Some(v) => {
+            let tone = if v >= 0.0 {
+                MoonTone::Positive
+            } else {
+                MoonTone::Danger
+            };
+            let text = if v >= 0.0 {
+                format!("+{}", num(v))
+            } else {
+                num(v)
+            };
+            MoonDataCell::text(text).tone(tone).weight(500.0)
+        }
+        None => MoonDataCell::text("–").tone(MoonTone::Muted),
+    }
+}
+
+/// TP-ячейка: take-profit синим (`Info`/tp trader-cell), `–` если не выставлен.
+fn tp_cell(r: &OrderRow) -> MoonDataCell {
+    match r.take_profit {
+        Some(v) if v > 0.0 => MoonDataCell::text(num(v)).tone(MoonTone::Info),
+        _ => MoonDataCell::text("–").tone(MoonTone::Muted),
+    }
 }
 
 /// Кликабельный флаг стопа (SL/TS/Vstop): ON — зелёным, OFF — тускло. Клик шлёт ядру

@@ -751,20 +751,29 @@ impl Render for Shell {
         // (stop_propagation), клик вне или увод мыши — закрывает.
         let (metric_overlay, metric_dismiss) = self.metric_popup_layers(p, cx);
 
+        // Активность Main для авто-закрытия по неактивности: ОКОННЫЙ слушатель ловит ВСЕ
+        // движения мыши, в т.ч. над виджетами/панелями/чартом, которые блокируют hitbox
+        // корня (там gated `.on_mouse_move` молчал — отсюда «график закрылся, хотя мышь
+        // двигалась в окне»). Только при активном окне; без notify — это лишь отметка
+        // времени (дёшево, хоть и часто). Bubble-фаза, чтобы засчитать один раз за событие.
+        {
+            let backend = self.backend.clone();
+            let group = self.group.clone();
+            window.on_mouse_event::<MouseMoveEvent>(move |_e, phase, window, cx| {
+                if phase == DispatchPhase::Bubble && window.is_window_active() {
+                    backend.update(cx, |b, _| b.note_main_input(&group));
+                }
+            });
+        }
+
         v_flex()
             .size_full()
             .relative() // для absolute-позиционирования демо-попапа поверх дока
             // Фокусируемый корень → хоткеи (`on_key_down`) ловятся даже при пустом Main.
             .track_focus(&self.focus)
-            // Активность для авто-закрытия Main по неактивности: любое движение мыши при
-            // активном окне сбрасывает таймер. Без notify — это не визуальное изменение, лишь
-            // отметка времени (дёшево, хоть и часто). Неактивное окно движения не считает.
-            .on_mouse_move(cx.listener(|this, _e: &MouseMoveEvent, _window, cx| {
-                if this.window_active {
-                    let group = this.group.clone();
-                    this.backend.update(cx, |b, _| b.note_main_input(&group));
-                }
-            }))
+            // Активность для авто-закрытия Main по неактивности теперь пишет оконный
+            // `on_mouse_event::<MouseMoveEvent>` выше (gated `.on_mouse_move` на корне не
+            // ловил движение над блокирующими mouse виджетами).
             // НЕТ корневого .bg(): чарт-регион (центр дока) держим прозрачным «окном» под
             // own-pass (UnderScene). Хром (хедер/тулбар/панели/статус) красит свой фон сам.
             .font_family(design::mono())

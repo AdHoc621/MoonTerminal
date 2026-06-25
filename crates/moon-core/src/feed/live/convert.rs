@@ -327,6 +327,7 @@ fn build_order_row(
         price: last,
         fill_pct,
         strat,
+        strat_id: o.strat_id,
         uid: o.uid,
         emulator: o.emulator_mode,
         job_is_done: o.job_is_done,

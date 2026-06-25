@@ -17,8 +17,8 @@ use std::rc::Rc;
 use gpui::*;
 use moon_ui::{
     DockArea, MoonButtonSize, MoonButtonVariant, MoonDataCell, MoonDataRow, MoonDataTable,
-    MoonDataTableColumn, MoonDropdown, MoonMenuItem, MoonMenuSize, MoonPalette, MoonText, MoonTone,
-    Panel, PanelEvent, PanelInfo, PanelState, h_flex, v_flex,
+    MoonDataTableColumn, MoonDataTableState, MoonDropdown, MoonMenuItem, MoonMenuSize, MoonPalette,
+    MoonText, MoonTone, Panel, PanelEvent, PanelInfo, PanelState, h_flex, v_flex,
 };
 
 use rust_i18n::t;
@@ -114,6 +114,7 @@ impl OrderKind {
 pub(super) enum OrdCol {
     Core,
     Side,
+    Status,
     Token,
     Size,
     Sl,
@@ -122,13 +123,16 @@ pub(super) enum OrdCol {
     Buy,
     CurP,
     Fill,
+    Pnl,
+    Tp,
     Strat,
 }
 
 impl OrdCol {
-    pub(super) const ALL: [OrdCol; 11] = [
+    pub(super) const ALL: [OrdCol; 14] = [
         OrdCol::Core,
         OrdCol::Side,
+        OrdCol::Status,
         OrdCol::Token,
         OrdCol::Size,
         OrdCol::Sl,
@@ -137,6 +141,8 @@ impl OrdCol {
         OrdCol::Buy,
         OrdCol::CurP,
         OrdCol::Fill,
+        OrdCol::Pnl,
+        OrdCol::Tp,
         OrdCol::Strat,
     ];
 
@@ -145,6 +151,7 @@ impl OrdCol {
         match self {
             OrdCol::Core => "core",
             OrdCol::Side => "side",
+            OrdCol::Status => "status",
             OrdCol::Token => "token",
             OrdCol::Size => "size",
             OrdCol::Sl => "sl",
@@ -153,6 +160,8 @@ impl OrdCol {
             OrdCol::Buy => "buy",
             OrdCol::CurP => "cur.p",
             OrdCol::Fill => "fill",
+            OrdCol::Pnl => "pnl",
+            OrdCol::Tp => "tp",
             OrdCol::Strat => "strat",
         }
     }
@@ -239,6 +248,13 @@ pub struct OrdersPanel {
     cache_key: Option<OrdersCacheKey>,
     cached_cores: Vec<(CoreId, String)>,
     cached_entries: Rc<Vec<OrderEntry>>,
+    /// Retained-стейт таблицы (порядок/ширины колонок). Владеем сами — иначе порядок
+    /// жил бы в анонимном `use_keyed_state` окна и его нельзя было бы ни засеять из
+    /// `docks.json`, ни прочитать для персиста при drag-перестановке заголовков.
+    table_state: Entity<MoonDataTableState>,
+    /// Последний персистнутый порядок колонок — чтобы `observe` не дампил док на каждый
+    /// `notify` стейта (выделение/ресайз), а только когда порядок реально сменился.
+    col_order_cache: Vec<SharedString>,
     dock: Option<WeakEntity<DockArea>>,
     focus: FocusHandle,
 }
@@ -265,6 +281,19 @@ impl OrdersPanel {
             }
         })
         .detach();
+        // Перестановка/ресайз колонок мутирует `table_state` и шлёт `notify`. Ловим его и,
+        // если СПИСОК ПОРЯДКА сменился, дампим док (персист в `docks.json`). Дамп читает эту
+        // же панель → откладываем через `cx.defer`, вне текущего borrow (как в `mutate`).
+        let table_state = cx.new(|_| MoonDataTableState::new());
+        cx.observe(&table_state, |this, state, cx| {
+            let cur = state.read(cx).column_order.clone();
+            if cur != this.col_order_cache {
+                this.col_order_cache = cur;
+                let view = cx.entity();
+                cx.defer(move |app| Self::persist(&view, app));
+            }
+        })
+        .detach();
         let mut this = Self {
             backend,
             group,
@@ -273,6 +302,8 @@ impl OrdersPanel {
             cache_key: None,
             cached_cores: Vec::new(),
             cached_entries: Rc::new(Vec::new()),
+            table_state,
+            col_order_cache: Vec::new(),
             dock: None,
             focus: cx.focus_handle(),
         };
@@ -387,6 +418,12 @@ impl OrdersPanel {
     ) -> Self {
         let mut this = Self::new(backend, group, window, cx);
         this.view = view_from_info(info);
+        // Порядок колонок (drag) персистится отдельно от `view` (это не Copy-список).
+        let order = column_order_from_info(info);
+        if !order.is_empty() {
+            this.col_order_cache = order.clone();
+            this.table_state.update(cx, |s, _| s.column_order = order);
+        }
         this
     }
 
@@ -485,6 +522,24 @@ fn view_from_info(info: &PanelInfo) -> OrdersViewState {
     v
 }
 
+/// Сохранённый порядок колонок (drag) из `PanelInfo` → список ключей. Берём только
+/// валидные `OrdCol`-ключи (устойчиво к мусору/переименованиям). Пусто → дефолт `ALL`.
+fn column_order_from_info(info: &PanelInfo) -> Vec<SharedString> {
+    let PanelInfo::Panel(j) = info else {
+        return Vec::new();
+    };
+    j.get("column_order")
+        .and_then(|x| x.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|x| x.as_str())
+                .filter(|s| OrdCol::from_key(s).is_some())
+                .map(SharedString::from)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 impl EventEmitter<PanelEvent> for OrdersPanel {}
 impl Focusable for OrdersPanel {
     fn focus_handle(&self, _: &App) -> FocusHandle {
@@ -507,7 +562,7 @@ impl Panel for OrdersPanel {
     fn title(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         SharedString::from(t!("dock.tab.orders").to_string())
     }
-    fn dump(&self, _cx: &App) -> PanelState {
+    fn dump(&self, cx: &App) -> PanelState {
         // Группа (для реконструкции) + состояние вида: сортировка/тип/фильтр. `source`
         // (ядро) не сохраняем — id ядра не стабилен между запусками (как в egui).
         PanelState {
@@ -526,6 +581,15 @@ impl Panel for OrdersPanel {
                     .visible_columns()
                     .iter()
                     .map(|c| c.key())
+                    .collect::<Vec<_>>(),
+                // Порядок колонок после drag-перестановки заголовков (стабильные ключи).
+                // Живёт в `table_state`; читаем напрямую. Пустой → дефолтный порядок `ALL`.
+                "column_order": self
+                    .table_state
+                    .read(cx)
+                    .column_order
+                    .iter()
+                    .map(|k| k.to_string())
                     .collect::<Vec<_>>(),
             })),
         }
@@ -589,7 +653,7 @@ impl Render for OrdersPanel {
         }
 
         // ── Виртуальная таблица в геометрии HTML-эталона ──
-        let table = table::orders_table(entries, view.columns, cx);
+        let table = table::orders_table(entries, view.columns, &self.table_state, cx);
 
         v_flex()
             .id("orders-panel")

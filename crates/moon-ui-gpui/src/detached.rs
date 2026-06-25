@@ -182,8 +182,22 @@ impl DetachedWindow {
 }
 
 impl Render for DetachedWindow {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         crate::diag::bump(&crate::diag::DETACHED_RENDER);
+        // Активность Main для авто-закрытия по неактивности: откреплённое окно (Ордера/Лог/…)
+        // несёт тот же `group`, что и Main, но это ОТДЕЛЬНОЕ ОС-окно — слушатель Shell его
+        // движений не видит. Поэтому пишем активность группе и отсюда (мышь над любым
+        // виджетом окна), пока это окно активно. Иначе график Main закрывался, хотя
+        // пользователь активно работал в окне ордеров.
+        {
+            let backend = self.backend.clone();
+            let group = self.group.clone();
+            window.on_mouse_event::<MouseMoveEvent>(move |_e, phase, window, cx| {
+                if phase == DispatchPhase::Bubble && window.is_window_active() {
+                    backend.update(cx, |b, _| b.note_main_input(&group));
+                }
+            });
+        }
         let p = MoonPalette::active(cx);
         let title = format!("{} · {}", panel_title(&self.panel), self.group);
         v_flex()

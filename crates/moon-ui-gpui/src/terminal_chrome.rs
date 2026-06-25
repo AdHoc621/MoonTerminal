@@ -176,6 +176,12 @@ fn risk_meter(p: MoonPalette, cx: &App) -> impl IntoElement {
 /// `Backend::active_trade_core` (авто-следование за фуллскрин-чартом + sticky-override
 /// при ручном выборе). Все торговые контролы тулбара/шапки читают это же ядро.
 fn core_selector(group: &str, backend: &Entity<Backend>, p: MoonPalette, cx: &App) -> AnyElement {
+    // Геометрия пилюли: фикс. ширина/высота (не «дышит»), полное скругление = ½ высоты.
+    // `SEL_NAME_MAX` — лимит символов имени под `SEL_W` (обрезка справа, без overflow-клипа).
+    const SEL_W: f32 = 140.0;
+    const SEL_H: f32 = 26.0;
+    const SEL_NAME_MAX: usize = 13;
+
     let b = backend.read(cx);
     let cores = b.group_cores(group);
     let active = b.active_trade_core(group);
@@ -200,6 +206,11 @@ fn core_selector(group: &str, backend: &Entity<Backend>, p: MoonPalette, cx: &Ap
         .and_then(|id| cores.iter().find(|(cid, _)| *cid == id))
         .map(|(_, n)| n.clone())
         .unwrap_or_else(|| "—".to_string());
+    // Пилюля фикс. ширины (см. ниже), а у базового Button нет overflow-клипа → длинное имя
+    // обрезаем САМИ по символам, оставляя ЛЕВУЮ часть (как просили: «обрезать справа», левый
+    // край на месте). Короткие имена остаются как есть; многоточие не добавляем (имя и так
+    // лишь подпись активного ядра, точный список — в выпадашке).
+    let active_name: String = active_name.chars().take(SEL_NAME_MAX).collect();
 
     let mut items = Vec::with_capacity(cores.len());
     for (id, name) in &cores {
@@ -219,9 +230,24 @@ fn core_selector(group: &str, backend: &Entity<Backend>, p: MoonPalette, cx: &Ap
         );
     }
 
+    // Вариант `Neutral` (фон 0x1F2126), НЕ `Panel`: у шапки фон = `shell_high` (0x1A1C1F),
+    // а Panel красит кнопку тем же `shell_high` → коробка пилюли сливалась с шапкой (виден был
+    // лишь «● имя ▾» без рамки). Neutral светлее фона шапки и совпадает с эталонными пилюлями
+    // тулбара (TP/SL/Lev) → контрол читается как «таблетка» с точкой статуса, как в макете.
+    //
+    // Форма: фикс. ширина `SEL_W` (не «дышит» при смене имени ядра) + полное скругление
+    // (radius = ½ высоты → полукруги по краям). База `Button` центрирует контент
+    // (`justify_center`) → текст по центру. Имя уже обрезано справа (см. выше).
     MoonDropdown::new("header-core-selector")
-        .trigger_variant(MoonButtonVariant::Panel)
-        .trigger_size(MoonButtonSize::Action)
+        .trigger_variant(MoonButtonVariant::Neutral)
+        .trigger_size(MoonButtonSize::Custom {
+            height: SEL_H,
+            radius: SEL_H / 2.0,
+            font_size: 10.5,
+            line_height: 16.0,
+            gap: 5.0,
+        })
+        .trigger_width(SEL_W)
         .menu_width(180.0)
         .menu_size(MoonMenuSize::Compact)
         .segment(MoonButtonSegment::new("●").color(dot_color).weight(400.0))

@@ -495,6 +495,7 @@ mod tests {
             price: 60_000.0,
             fill_pct: 0.0,
             strat: "test".into(),
+            strat_id: 0,
             uid,
             emulator: false,
             job_is_done: false,
