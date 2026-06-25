@@ -224,15 +224,22 @@ impl Default for OrdersViewState {
     }
 }
 
-/// Вход (покупка) заполнен.
-fn executed(r: &OrderRow) -> bool {
-    r.fill_pct >= 99.95
+/// Вход исполнен (позиция открыта) — по АВТОРИТЕТНОМУ статусу воркера, а не по `fill_pct`
+/// ноги. Стейт-машина фазовая для обоих направлений: `None`/`BuySet` = вход ещё ждёт;
+/// `BuyDone` (вход залился) и любая `Sell*` фаза (выход выставлен/идёт/закрыт) = в позиции.
+/// (Раньше брали `fill_pct` входной ноги, но для шорта она читалась из пустого `sell_order`
+/// → шорт навсегда висел как `Short-S`.)
+pub(super) fn executed(r: &OrderRow) -> bool {
+    matches!(
+        r.status.as_str(),
+        "BuyDone" | "SellSet" | "SellDone" | "SellFail" | "SellCancel" | "SellAlmostDone"
+    )
 }
-/// SELL — исполненный ЛОНГ (куплен и выставлен на продажу). НЕ шорт.
+/// «Позиция в работе» (вход исполнен) — лонг ИЛИ шорт. Для сортировки SellFirst.
 pub(super) fn is_sell(r: &OrderRow) -> bool {
-    !r.is_short && executed(r)
+    executed(r)
 }
-/// BUY — лонг, ещё не исполнен (ждёт покупки).
+/// BUY — лонг, ещё не исполнен (ждёт покупки/входа). Только pending-вход лонга.
 pub(super) fn is_buy(r: &OrderRow) -> bool {
     !r.is_short && !executed(r)
 }

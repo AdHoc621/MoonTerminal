@@ -229,11 +229,10 @@ fn build_order_row(
         Some(s) => strat_kind_name(s.kind().ordinal()).to_string(),
         None => o.strat_id.to_string(),
     };
-    let leg = if o.is_short {
-        &o.sell_order
-    } else {
-        &o.buy_order
-    };
+    // Входная нога ВСЕГДА `buy_order` — и для лонга, и для шорта (статус-машина фазовая:
+    // вход = «Buy*», выход = «Sell*»; у шорта вход тоже лежит в buy_order/buy_price, а
+    // sell_order — пустая выходная нога). Раньше для шорта брали sell_order → fill_pct=0.
+    let leg = &o.buy_order;
     let fill_pct = if leg.quantity > 0.0 {
         ((leg.quantity - leg.quantity_remaining) / leg.quantity * 100.0) as f32
     } else {
@@ -328,6 +327,7 @@ fn build_order_row(
         fill_pct,
         strat,
         strat_id: o.strat_id,
+        status: o.status.name().to_string(),
         uid: o.uid,
         emulator: o.emulator_mode,
         job_is_done: o.job_is_done,

@@ -71,7 +71,7 @@ fn column_def(col: OrdCol) -> MoonDataTableColumn {
     let title = col_title(col);
     match col {
         OrdCol::Core => MoonDataTableColumn::new("core", title, 90.0),
-        OrdCol::Side => MoonDataTableColumn::new("side", title, 60.0),
+        OrdCol::Side => MoonDataTableColumn::new("side", title, 82.0),
         OrdCol::Status => MoonDataTableColumn::new("status", title, 76.0),
         OrdCol::Token => numeric_column("token", title, 70.0),
         OrdCol::Size => numeric_column("size", title, 70.0),
@@ -129,16 +129,19 @@ fn cell_for(col: OrdCol, e: &OrderEntry, view: &Entity<OrdersPanel>, p: MoonPale
     }
 }
 
-/// Отображаемая сторона и её тон (baseline UI Kit): SELL (исполненный лонг) — синим
-/// (`Info`/tp), SHORT — красным (`Danger`/sl), BUY (ждёт) — оранжевым (`Negative`/order);
-/// эмулятор → суффикс `(E)`.
+/// Отображаемая сторона и её тон. Цвет = «вход исполнен» (синий, `Info`) vs «ждёт вход»
+/// (оранжевый, `Negative`); метка различает направление и фазу:
+/// - BUY — лонг/спот, вход (buy) ещё не исполнен;
+/// - SELL — лонг исполнен → нога выхода (sell);
+/// - Short-S — шорт, pending вход (sell-to-open);
+/// - Short-B — шорт исполнен → нога выхода (buy-to-close).
+/// Эмулятор → суффикс `(E)`.
 fn side_label(r: &OrderRow) -> (String, MoonTone) {
-    let (side, tone) = if is_sell(r) {
-        ("SELL", MoonTone::Info)
-    } else if r.is_short {
-        ("SHORT", MoonTone::Danger)
-    } else {
-        ("BUY", MoonTone::Negative)
+    let (side, tone) = match (r.is_short, executed(r)) {
+        (false, false) => ("BUY", MoonTone::Negative),
+        (false, true) => ("SELL", MoonTone::Info),
+        (true, false) => ("Short-S", MoonTone::Negative),
+        (true, true) => ("Short-B", MoonTone::Info),
     };
     let side = if r.emulator {
         format!("{side}(E)")
