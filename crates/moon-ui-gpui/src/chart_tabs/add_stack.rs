@@ -52,6 +52,10 @@ pub(crate) struct AddChartStack {
     compare_y: Option<(f32, f32)>,
     /// Режим метлы: соседи якоря показывают «только стакан» (чарт+ось цен скрыты).
     compare_orderbook_only: bool,
+    /// Держать ли пустой слот при выбытии графика (COMPRESS-реюз для авто-AddToChart: место
+    /// сохраняется под следующий детект). У КАСТОМНЫХ вкладок = false: закрыл график → слот
+    /// удаляется сразу, соседи перераспределяются по раскладке.
+    hold_vacated: bool,
     /// Скролл-хэндл вертикального MoonVirtualList (scroll-режим стека).
     scroll: MoonVirtualListScrollHandle,
 }
@@ -83,8 +87,14 @@ impl AddChartStack {
             compare_anchor: None,
             compare_y: None,
             compare_orderbook_only: false,
+            hold_vacated: true,
             scroll: MoonVirtualListScrollHandle::new(),
         }
+    }
+
+    /// Кастомная вкладка: НЕ держать пустые слоты (закрыл график → перераспределить остальные).
+    pub(crate) fn set_hold_vacated(&mut self, hold: bool) {
+        self.hold_vacated = hold;
     }
 
     pub(crate) fn compare_anchor(&self) -> Option<(CoreId, String)> {
@@ -183,8 +193,9 @@ impl AddChartStack {
             return;
         }
 
-        // COMPRESS: новый занимает ПЕРВЫЙ пустой держащийся слот (без сдвига/смены размера соседей).
-        if compress {
+        // COMPRESS (только авто-AddToChart): новый занимает ПЕРВЫЙ пустой держащийся слот (без
+        // сдвига/смены размера соседей). Кастомные держат hold_vacated=false → этот путь не нужен.
+        if compress && self.hold_vacated {
             if let Some(i) = self.charts.iter().position(|e| e.vacated) {
                 self.charts[i].core = core;
                 self.charts[i].market = market.to_string();
@@ -245,7 +256,9 @@ impl AddChartStack {
             self.layout_height_fit,
             self.layout_height_scroll,
         );
-        if !compress {
+        // FIT-stretch / Scroll, ИЛИ кастомная вкладка (hold_vacated=false): пустые удаляем сразу
+        // → соседи перераспределяются. Держим слот только в COMPRESS у авто-AddToChart.
+        if !compress || !self.hold_vacated {
             let before = self.charts.len();
             self.charts.retain(|e| e.panel.read(cx).pane_count() > 0);
             return self.charts.len() != before;

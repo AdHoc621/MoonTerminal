@@ -79,8 +79,11 @@ impl ChartTabs {
                 self.theme.clone(),
             )
         });
-        // По умолчанию — горизонтальная ориентация.
-        stack.update(cx, |s, c| s.set_orientation(Some(StackOrientation::Horizontal), c));
+        // По умолчанию — горизонтальная ориентация. Кастомная вкладка не держит пустые слоты.
+        stack.update(cx, |s, c| {
+            s.set_hold_vacated(false);
+            s.set_orientation(Some(StackOrientation::Horizontal), c);
+        });
         for (core, market) in &coins {
             stack.update(cx, |s, c| {
                 s.add_coin(*core, market, coin_search::MANUAL_COIN_TTL_MS, c)
@@ -276,6 +279,7 @@ impl ChartTabs {
                 )
             });
             stack.update(cx, |s, c| {
+                s.set_hold_vacated(false);
                 s.set_orientation(Some(orientation.unwrap_or(StackOrientation::Horizontal)), c);
                 if scale.is_some() {
                     s.set_scale(scale, c);

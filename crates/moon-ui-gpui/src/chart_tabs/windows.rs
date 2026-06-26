@@ -384,6 +384,7 @@ impl ChartTabs {
                         custom
                     {
                         panel.update(cx, |s, c| {
+                            s.set_hold_vacated(false);
                             s.set_orientation(
                                 Some(orientation.unwrap_or(StackOrientation::Horizontal)),
                                 c,
