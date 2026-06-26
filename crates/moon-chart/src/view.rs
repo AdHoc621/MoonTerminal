@@ -256,6 +256,30 @@ impl ChartView {
         self.manual_price = false;
     }
 
+    /// Текущее видимое Y-окно `(center, range)` — для режима сравнения (lock по якорю).
+    pub fn y_window(&self) -> (f32, f32) {
+        (self.render_center, self.render_range)
+    }
+
+    /// Навязать Y-окно (режим сравнения): центр+диапазон и заморозить авто-фит (`manual_price`).
+    /// Идемпотентно — возвращает `false`, если значения уже такие (чтобы бродкаст не зацикливался).
+    pub fn set_y_window(&mut self, center: f32, range: f32) -> bool {
+        let range = range.max(1e-6);
+        let same = self.manual_price
+            && (self.center_price - center).abs() < 1e-6
+            && (self.price_range - range).abs() < 1e-6;
+        if same {
+            return false;
+        }
+        self.auto_price = false;
+        self.manual_price = true;
+        self.center_price = center;
+        self.price_range = range;
+        self.render_center = center;
+        self.render_range = range;
+        true
+    }
+
     /// Фикс-процент: видимый диапазон = цена*percent (как ZoomBar moonweb).
     pub fn set_scale_percent(&mut self, percent: f32) {
         self.auto_price = false;

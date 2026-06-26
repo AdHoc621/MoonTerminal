@@ -274,6 +274,35 @@ impl ChartEngine {
         true
     }
 
+    /// Текущее Y-окно `(center, range)` первой панели — источник для режима сравнения (якорь).
+    pub fn y_window(&self) -> Option<(f32, f32)> {
+        self.container
+            .borrow()
+            .panes()
+            .first()
+            .map(|p| p.view.y_window())
+    }
+
+    /// Навязать Y-окно всем панелям движка (lock сравнения по якорю). `true` при изменении.
+    pub fn set_locked_y(&mut self, center: f32, range: f32) -> bool {
+        let mut changed = false;
+        for p in self.container.borrow_mut().panes_mut() {
+            changed |= p.view.set_y_window(center, range);
+        }
+        if changed {
+            self.data.borrow_mut().mark_view_dirty();
+        }
+        changed
+    }
+
+    /// Принудительно пере-применить масштаб вкладки (после выхода из lock сравнения), минуя кэш
+    /// `self.scale` (он не изменился, обычный `set_scale` был бы no-op). None = Авто.
+    pub fn reapply_scale(&mut self, pct: Option<f32>) {
+        self.scale = pct;
+        self.container.borrow_mut().set_scale(pct);
+        self.data.borrow_mut().mark_view_dirty();
+    }
+
     /// Вкл/выкл стакан для всех панелей этого движка (per-окно). Возвращает `true` при изменении.
     pub fn set_orderbook_enabled(&mut self, enabled: bool) -> bool {
         let mut data = self.data.borrow_mut();

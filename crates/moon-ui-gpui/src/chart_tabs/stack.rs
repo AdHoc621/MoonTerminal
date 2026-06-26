@@ -114,6 +114,86 @@ pub(super) fn set_panels_auto_pin<S: 'static>(
     }
 }
 
+/// Обработать клики по замку (режим сравнения): забрать pending у всех панелей. Если кликнули —
+/// переключить якорь: повторный клик по текущему якорю снимает сравнение; иначе назначить новый
+/// якорь и переставить его в индекс 0 (крайний левый). Возвращает true при изменении якоря/порядка.
+pub(super) fn handle_compare_lock_requests<S: 'static>(
+    entries: &mut Vec<ChartStackEntry>,
+    anchor: &mut Option<(CoreId, String)>,
+    cx: &mut Context<S>,
+) -> bool {
+    let mut clicked: Option<(CoreId, String)> = None;
+    for e in entries.iter() {
+        if e.panel.update(cx, |p, _| p.take_compare_lock_request()) {
+            clicked = Some((e.core, e.market.clone()));
+        }
+    }
+    let Some(key) = clicked else {
+        return false;
+    };
+    if anchor.as_ref() == Some(&key) {
+        *anchor = None; // повторный клик по якорю → выключить сравнение
+    } else {
+        if let Some(pos) = entries
+            .iter()
+            .position(|e| e.core == key.0 && e.market == key.1)
+        {
+            let e = entries.remove(pos);
+            entries.insert(0, e); // якорь — в начало ряда (налево)
+        }
+        *anchor = Some(key);
+    }
+    true
+}
+
+/// Применить состояние сравнения к панелям: `compare_eligible = horizontal` на всех; при активном
+/// сравнении (horizontal И есть якорь) — пометить якорь и навязать ВСЕМ его Y-окно; иначе снять
+/// lock. Ведущее окно — ВСЕГДА у якоря (он стабилен между проходами observe, поэтому синхронизация
+/// сходится за пару проходов без notify-петли). Пан/зум по якорю двигает всех; драг соседа
+/// возвращается к окну якоря (синхрон от ведущего — пан-везде это отдельный шаг, см. docs-internal).
+///
+/// ВАЖНО: НЕ берём окно соседей как «ведущее» — `set_locked_y` пишет только поле панели, в движок
+/// применяется на render; в синхронном цикле observe→notify их `y_window()` ещё старое, и любая
+/// детекция «кто подвигал» по нему даёт скачущее окно → бесконечный цикл (зависание).
+pub(super) fn apply_compare<S: 'static>(
+    entries: &[ChartStackEntry],
+    anchor: &Option<(CoreId, String)>,
+    shared: &mut Option<(f32, f32)>,
+    horizontal: bool,
+    cx: &mut Context<S>,
+) {
+    let key = anchor
+        .as_ref()
+        .filter(|k| entries.iter().any(|e| e.core == k.0 && e.market == k.1));
+    let active = horizontal && key.is_some();
+    if !active {
+        *shared = None;
+        for e in entries {
+            e.panel.update(cx, |p, c| {
+                p.set_compare_eligible(horizontal, c);
+                p.set_compare_anchor(false, c);
+                p.set_locked_y(None, c);
+            });
+        }
+        return;
+    }
+    let key = key.unwrap();
+    // Ведущее окно — текущее окно якоря (стабильно в пределах цикла observe → сходимость).
+    let window = entries
+        .iter()
+        .find(|e| e.core == key.0 && e.market == key.1)
+        .and_then(|e| e.panel.read(cx).y_window());
+    *shared = window;
+    for e in entries {
+        let is_anchor = e.core == key.0 && e.market == key.1;
+        e.panel.update(cx, |p, c| {
+            p.set_compare_eligible(true, c);
+            p.set_compare_anchor(is_anchor, c);
+            p.set_locked_y(window, c);
+        });
+    }
+}
+
 /// Убрать из стека панели без графиков. Возвращает true, если состав изменился.
 pub(super) fn retain_nonempty_panels(entries: &mut Vec<ChartStackEntry>, cx: &App) -> bool {
     let before = entries.len();

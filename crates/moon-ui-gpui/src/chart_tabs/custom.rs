@@ -88,10 +88,12 @@ impl ChartTabs {
         }
         // Чарты сразу запинены (защита от TTL-закрытия).
         stack.update(cx, |s, c| s.pin_all(c));
-        self.custom.push((num, bucket.clone(), stack));
+        self.custom.push((num, bucket.clone(), stack.clone()));
         self.custom_labels.insert(num, label.clone());
         self.active = Tab::Custom(num, bucket.clone());
         self.persist_custom(cx, num, &bucket, &coins, &label);
+        // Следить за составом → пере-персист при закрытии/добавлении чарта.
+        self.watch_custom_stack(num, &bucket, &stack, cx);
         // Сброс выбора/поля/попапа.
         self.coin_selected.clear();
         self.coin_query.clear();
@@ -154,6 +156,44 @@ impl ChartTabs {
                 b.chart_specs_dirty = true;
             }
         });
+    }
+
+    /// Подписаться на изменения кастомного стека → пере-персист тикеров при смене состава
+    /// (закрыли «×»/добавили чарт на сохранённой вкладке → обновляем `custom_coins`). Пока стек
+    /// откреплён (в `self.detached`), `sync_custom_coins` ничего не пишет (его держит окно-хост);
+    /// после репина в стрип эта подписка снова актуальна.
+    pub(super) fn watch_custom_stack(
+        &self,
+        num: u32,
+        bucket: &ChartBucket,
+        stack: &Entity<AddChartStack>,
+        cx: &mut Context<Self>,
+    ) {
+        let bk = bucket.clone();
+        cx.observe(stack, move |this, _stack, cx| {
+            this.sync_custom_coins(num, &bk, cx);
+        })
+        .detach();
+    }
+
+    /// Сверить текущий список тикеров кастомной вкладки с сохранённым; переписать спек ТОЛЬКО при
+    /// изменении (иначе observe-колбэк на каждый тик данных писал бы вхолостую).
+    fn sync_custom_coins(&mut self, num: u32, bucket: &ChartBucket, cx: &mut Context<Self>) {
+        let Some(stack) = self.add_stack(num, bucket) else {
+            return;
+        };
+        let coins = stack.read(cx).coins(cx);
+        let changed = {
+            let specs = &self.backend.read(cx).chart_specs;
+            specs
+                .iter()
+                .find(|s| s.group == self.group && s.num == num && s.bucket() == *bucket)
+                .map_or(true, |s| s.custom_coins.as_deref() != Some(coins.as_slice()))
+        };
+        if changed {
+            let label = self.custom_label(num);
+            self.persist_custom(cx, num, bucket, &coins, &label);
+        }
     }
 
     /// Пере-персист тикеров активной кастомной вкладки (после изменения состава).
@@ -234,6 +274,7 @@ impl ChartTabs {
                 }
                 s.pin_all(c);
             });
+            self.watch_custom_stack(num, &bucket, &stack, cx);
             self.custom.push((num, bucket, stack));
             if let Some(label) = label {
                 self.custom_labels.insert(num, label);

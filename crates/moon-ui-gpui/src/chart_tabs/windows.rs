@@ -399,6 +399,9 @@ impl ChartTabs {
                             this.custom_labels.insert(n, label);
                         }
                         this.next_custom_num = this.next_custom_num.max(n + 1);
+                        // Подписка ChartTabs на состав: пока окно открыто — персистит хост, но
+                        // после репина в стрип эта подписка снова обслуживает кастомную вкладку.
+                        this.watch_custom_stack(n, &bucket, &panel, cx);
                     }
                     if this.open_chart_window(n, panel.clone(), bucket.clone(), geom, true, cx) {
                         panel.update(cx, |p, pcx| p.set_scene_visible(false, pcx));
@@ -467,6 +470,12 @@ impl DetachedChartHost {
         // Геометрия окна (causal bounds event) → charts.json («то же место» при загрузке).
         cx.observe_window_bounds(window, |this, window, cx| {
             this.persist_geometry(window, cx);
+        })
+        .detach();
+        // Состав панели изменился (закрыли «×»/добавили монету) → если окно держит откреплённую
+        // кастомную вкладку, пере-персист её тикеров (diff внутри, no-op для обычных окон).
+        cx.observe(&panel, |this, _panel, cx| {
+            this.persist_custom_coins_if_any(cx);
         })
         .detach();
         // Восстановленное окно не пишет стартовые bounds сразу: на не-primary DPI GPUI/Win32
@@ -651,14 +660,15 @@ impl DetachedChartHost {
     }
 
     /// Если спек этого окна — кастомная вкладка (`custom_coins.is_some()`), переписать её тикеры
-    /// из текущего состава панели. Для обычных AddToChart-окон — no-op.
+    /// из текущего состава панели — ТОЛЬКО при изменении (observe-колбэк зовётся часто). Для
+    /// обычных AddToChart-окон — no-op.
     fn persist_custom_coins_if_any(&self, cx: &mut Context<Self>) {
         let (group, num, bucket) = (self.group.clone(), self.num, self.bucket.clone());
         let is_custom = {
             let specs = &self.backend.read(cx).chart_specs;
-            specs
-                .iter()
-                .any(|s| s.group == group && s.num == num && s.bucket() == bucket && s.custom_coins.is_some())
+            specs.iter().any(|s| {
+                s.group == group && s.num == num && s.bucket() == bucket && s.custom_coins.is_some()
+            })
         };
         if !is_custom {
             return;
@@ -670,8 +680,10 @@ impl DetachedChartHost {
                 .iter_mut()
                 .find(|s| s.group == group && s.num == num && s.bucket() == bucket)
             {
-                s.custom_coins = Some(coins);
-                b.chart_specs_dirty = true;
+                if s.custom_coins.as_deref() != Some(coins.as_slice()) {
+                    s.custom_coins = Some(coins);
+                    b.chart_specs_dirty = true;
+                }
             }
         });
     }

@@ -124,6 +124,15 @@ pub struct ChartPanel {
     /// ScrollBox-у; fullscreen и AddToChart сохраняют обычный chart zoom.
     main_stack_scroll: bool,
     last_axis_notify_data_sig: u64,
+    /// Режим сравнения доступен (вкладка горизонтальная) → показываем кнопку-замок.
+    compare_eligible: bool,
+    /// Этот чарт — якорь сравнения (замок горит, цена ведущая).
+    is_compare_anchor: bool,
+    /// Пользователь кликнул замок — стек заберёт запрос в своём observe (как пин, но наружу).
+    compare_lock_pending: bool,
+    /// Навязанное Y-окно `(center, range)` от якоря (lock сравнения). None = свободный Y.
+    /// Применяется в render через `set_locked_y` движка.
+    locked_y: Option<(f32, f32)>,
     view_dirty: bool,
     last_adaptive_notify_ms: f64,
     /// Последний scale_factor окна (ставится в render). Нужен data prepare path, у которого
@@ -244,6 +253,10 @@ impl ChartPanel {
             scene_visible: false,
             main_stack_scroll: false,
             last_axis_notify_data_sig: u64::MAX,
+            compare_eligible: false,
+            is_compare_anchor: false,
+            compare_lock_pending: false,
+            locked_y: None,
             view_dirty: true,
             last_adaptive_notify_ms: 0.0,
             last_ppp: 1.0,
@@ -330,6 +343,10 @@ impl ChartPanel {
             scene_visible: false,
             main_stack_scroll: false,
             last_axis_notify_data_sig: u64::MAX,
+            compare_eligible: false,
+            is_compare_anchor: false,
+            compare_lock_pending: false,
+            locked_y: None,
             view_dirty: true,
             last_adaptive_notify_ms: 0.0,
             last_ppp: 1.0,
@@ -429,6 +446,54 @@ impl ChartPanel {
     /// `try_place_order_click` при успешном ордере.
     pub fn set_auto_pin(&mut self, on: bool, _cx: &mut Context<Self>) {
         self.auto_pin = on;
+    }
+
+    /// Доступность режима сравнения (вкладка горизонтальная) — показывать ли кнопку-замок.
+    pub fn set_compare_eligible(&mut self, on: bool, cx: &mut Context<Self>) {
+        if self.compare_eligible != on {
+            self.compare_eligible = on;
+            cx.notify();
+        }
+    }
+
+    /// Пометить этот чарт якорем сравнения (замок горит). Управляет стек.
+    pub fn set_compare_anchor(&mut self, on: bool, cx: &mut Context<Self>) {
+        if self.is_compare_anchor != on {
+            self.is_compare_anchor = on;
+            cx.notify();
+        }
+    }
+
+    /// Клик по замку → выставить запрос и уведомить (стек заберёт его в observe).
+    fn request_compare_lock(&mut self, cx: &mut Context<Self>) {
+        self.compare_lock_pending = true;
+        cx.notify();
+    }
+
+    /// Забрать флаг «кликнули замок» (стек дёргает в своём observe). Сбрасывает его.
+    pub fn take_compare_lock_request(&mut self) -> bool {
+        std::mem::take(&mut self.compare_lock_pending)
+    }
+
+    /// Текущее Y-окно `(center, range)` (для стека — окно якоря). None если нет панелей.
+    pub fn y_window(&self) -> Option<(f32, f32)> {
+        self.chart.y_window()
+    }
+
+    /// Навязать/снять lock Y-окна от якоря сравнения. Установка применяется в render каждый кадр;
+    /// снятие (None) одноразово возвращает Y-режим вкладки (масштаб/авто).
+    pub fn set_locked_y(&mut self, window: Option<(f32, f32)>, cx: &mut Context<Self>) {
+        if self.locked_y == window {
+            return;
+        }
+        let exiting = window.is_none();
+        self.locked_y = window;
+        if exiting {
+            // Выходим из сравнения → вернуть масштаб вкладки (или авто), минуя кэш движка.
+            self.chart.reapply_scale(self.scale);
+        }
+        self.view_dirty = true;
+        cx.notify();
     }
 
     /// AddToChart: открыть/продлить монету в этой панели с TTL.

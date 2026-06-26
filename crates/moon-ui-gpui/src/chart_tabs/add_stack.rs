@@ -6,8 +6,9 @@ use gpui::*;
 use moon_ui::MoonVirtualListScrollHandle;
 
 use super::stack::{
-    ChartStackEntry, HIGHLIGHT, render_chart_stack, resolve_layout, set_panels_orderbook_enabled,
-    set_panels_auto_pin, set_panels_scale, set_panels_show_zone,
+    ChartStackEntry, HIGHLIGHT, apply_compare, handle_compare_lock_requests, render_chart_stack,
+    resolve_layout, set_panels_auto_pin, set_panels_orderbook_enabled, set_panels_scale,
+    set_panels_show_zone,
 };
 use crate::Backend;
 use crate::chart_persist::{StackLayoutMode, StackOrientation};
@@ -44,6 +45,11 @@ pub(crate) struct AddChartStack {
     /// стакан = `orderbook_enabled ∧ !suspended` — не затирает пользовательскую галку «Стакан».
     /// Откреплённые в окно вкладки никогда не suspend (окно само держит спрос).
     orderbook_suspended: bool,
+    /// Якорь режима сравнения `(core, market)` — ведущий по цене чарт (замок горит, стоит слева).
+    /// None = сравнение выключено. Активно только в горизонтальной ориентации.
+    compare_anchor: Option<(CoreId, String)>,
+    /// Общее Y-окно сравнения `(center, range)` — следует за последней изменённой панелью.
+    compare_y: Option<(f32, f32)>,
     /// Скролл-хэндл вертикального MoonVirtualList (scroll-режим стека).
     scroll: MoonVirtualListScrollHandle,
 }
@@ -72,8 +78,30 @@ impl AddChartStack {
             auto_pin: None,
             layout_orientation: None,
             orderbook_suspended: false,
+            compare_anchor: None,
+            compare_y: None,
             scroll: MoonVirtualListScrollHandle::new(),
         }
+    }
+
+    /// Синхронизировать режим сравнения: забрать клики замка (сменить/снять якорь, переставить
+    /// влево), затем навязать общее Y-окно/флаги панелям. В вертикали сравнение выключено.
+    fn sync_compare(&mut self, cx: &mut Context<Self>) {
+        let horizontal = self
+            .layout_orientation
+            .unwrap_or(StackOrientation::Vertical)
+            .is_horizontal();
+        if !horizontal {
+            self.compare_anchor = None;
+        }
+        handle_compare_lock_requests(&mut self.charts, &mut self.compare_anchor, cx);
+        apply_compare(
+            &self.charts,
+            &self.compare_anchor,
+            &mut self.compare_y,
+            horizontal,
+            cx,
+        );
     }
 
     pub(super) fn add_coin(
@@ -131,6 +159,7 @@ impl AddChartStack {
         // пере-сортировка запиненных наверх происходит в render.
         cx.observe(&panel, |this, _, cx| {
             this.prune_or_hold(cx);
+            this.sync_compare(cx);
             cx.notify();
         })
         .detach();
@@ -151,6 +180,8 @@ impl AddChartStack {
         panel.update(cx, |panel, pcx| panel.add_coin(core, market, ttl_ms, pcx));
         self.charts
             .push(ChartStackEntry::new(core, market.to_string(), panel));
+        // Новый тикер: в режиме сравнения сразу получает eligible + общее Y-окно якоря.
+        self.sync_compare(cx);
         cx.notify();
     }
 
@@ -273,6 +304,8 @@ impl AddChartStack {
             return;
         }
         self.layout_orientation = orientation;
+        // Ориентация влияет на доступность сравнения (вертикаль выключает lock).
+        self.sync_compare(cx);
         cx.notify();
     }
 

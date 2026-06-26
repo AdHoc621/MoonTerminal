@@ -8,8 +8,9 @@ use gpui::*;
 use moon_ui::MoonVirtualListScrollHandle;
 
 use super::stack::{
-    ChartStackEntry, render_chart_stack, resolve_layout, retain_nonempty_panels,
-    set_panels_auto_pin, set_panels_orderbook_enabled, set_panels_scale, set_panels_show_zone,
+    ChartStackEntry, apply_compare, handle_compare_lock_requests, render_chart_stack,
+    resolve_layout, retain_nonempty_panels, set_panels_auto_pin, set_panels_orderbook_enabled,
+    set_panels_scale, set_panels_show_zone,
 };
 use crate::Backend;
 use crate::chart_persist::{StackLayoutMode, StackOrientation};
@@ -44,6 +45,10 @@ pub(crate) struct MainChartStack {
     auto_pin: Option<bool>,
     /// Ориентация стека (per-окно). None = дефолт (Vertical).
     layout_orientation: Option<StackOrientation>,
+    /// Якорь сравнения `(core, market)` — ведущий по цене (замок горит, стоит слева). None = выкл.
+    compare_anchor: Option<(CoreId, String)>,
+    /// Общее Y-окно сравнения, следует за последней изменённой панелью.
+    compare_y: Option<(f32, f32)>,
     /// Армирован ли one-shot таймер авто-закрытия по неактивности (config `main_idle_close_secs`).
     /// Тикает ~1 Гц, пока фича включена и есть графики; сам пере-армится. См. `arm_idle_timer`.
     idle_timer_armed: bool,
@@ -75,6 +80,8 @@ impl MainChartStack {
             show_zone: None,
             auto_pin: None,
             layout_orientation: None,
+            compare_anchor: None,
+            compare_y: None,
             idle_timer_armed: false,
             scroll: MoonVirtualListScrollHandle::new(),
         };
@@ -97,9 +104,13 @@ impl MainChartStack {
         let panel =
             cx.new(|cx| ChartPanel::new_main(backend, Some((core, market)), epoch, theme, cx));
         cx.observe(&panel, |this, _, cx| {
-            if this.prune_empty(cx) {
+            let mut dirty = this.prune_empty(cx);
+            if dirty {
                 this.sync_visibility(cx);
                 this.sync_backend_active(cx);
+            }
+            dirty |= this.sync_compare(cx);
+            if dirty {
                 cx.notify();
             }
         })
@@ -117,6 +128,27 @@ impl MainChartStack {
             panel.update(cx, |panel, pcx| panel.set_auto_pin(ap, pcx));
         }
         panel
+    }
+
+    /// Синхронизировать режим сравнения (как в `AddChartStack`): забрать клики замка, навязать
+    /// общее Y-окно/флаги. Возвращает true, если якорь/порядок изменились (нужен notify стека).
+    fn sync_compare(&mut self, cx: &mut Context<Self>) -> bool {
+        let horizontal = self
+            .layout_orientation
+            .unwrap_or(StackOrientation::Vertical)
+            .is_horizontal();
+        if !horizontal {
+            self.compare_anchor = None;
+        }
+        let changed = handle_compare_lock_requests(&mut self.charts, &mut self.compare_anchor, cx);
+        apply_compare(
+            &self.charts,
+            &self.compare_anchor,
+            &mut self.compare_y,
+            horizontal,
+            cx,
+        );
+        changed
     }
 
     pub(super) fn open_or_focus(&mut self, core: CoreId, market: String, cx: &mut Context<Self>) {
@@ -139,6 +171,8 @@ impl MainChartStack {
         self.show_stack = false;
         self.sync_visibility(cx);
         self.sync_backend_active(cx);
+        // Новый чарт: в режиме сравнения сразу получает eligible + общее Y-окно.
+        self.sync_compare(cx);
         cx.notify();
     }
 
@@ -362,6 +396,7 @@ impl MainChartStack {
             return;
         }
         self.layout_orientation = orientation;
+        self.sync_compare(cx);
         cx.notify();
     }
 

@@ -46,11 +46,16 @@ impl Render for ChartPanel {
         };
         // Масштаб — ПО-ВКЛАДОЧНЫЙ: берём self.scale (его правят set_scale из тулбара активной
         // вкладки / шапки выносного окна), а не глобальный backend.price_scale.
-        let settings_changed = self.chart.set_theme(theme)
+        let mut settings_changed = self.chart.set_theme(theme)
             | self.chart.set_orders(orders_style)
             | self.chart.set_scale(self.scale)
             | self.chart.set_orderbook_enabled(self.orderbook_enabled)
             | self.chart.set_follow(follow, now_unix_ms());
+        // Режим сравнения: пока активен lock, держим Y-окно якоря (перебивает scale каждый кадр —
+        // set_locked_y идемпотентен, без изменений вернёт false). Снятие lock — в set_locked_y.
+        if let Some((center, range)) = self.locked_y {
+            settings_changed |= self.chart.set_locked_y(center, range);
+        }
         if settings_changed {
             self.view_dirty = true;
         }
@@ -92,6 +97,20 @@ impl Render for ChartPanel {
                 )
             })
             .collect();
+        // Кнопка-замок режима сравнения — ТОЛЬКО когда вкладка горизонтальная (`compare_eligible`),
+        // рядом с пином. Горит на якоре (`is_compare_anchor`). Клик переносит чарт влево и делает
+        // его ведущим по цене (обрабатывает стек по `take_compare_lock_request`).
+        let compare_anchor = self.is_compare_anchor;
+        let lock_btns: Vec<(usize, f32, f32)> = if self.compare_eligible {
+            axis_panes
+                .iter()
+                .map(|(idx, rect, _)| {
+                    (*idx, rect.x / ppp + moon_chart::PRICE_AXIS_W, rect.y / ppp)
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
         // Риска зоны управления: при раздельных зонах И СКРЫТОМ стакане рисуем границу зоны
         // ордеров (справа поверх чарта), чтобы было видно, где клики ставят ордера, а где
         // дабл-клик уходит на Main. Стакан виден → его видно и так, риску не дублируем.
@@ -575,6 +594,24 @@ impl Render for ChartPanel {
                     .bounds(MoonRect::new(left + 3.0, top + 3.0, 15.0, 15.0))
                     .on_click(move |_, _w, app| {
                         entity.update(app, |this, cx| this.toggle_pin(idx, cx));
+                    })
+                    .render()
+            }))
+            .children(lock_btns.into_iter().map(|(idx, left, top)| {
+                // Замок справа от пина: клик → этот чарт в начало ряда + ведущий по цене.
+                let entity = cx.entity();
+                MoonButton::new(SharedString::from(format!("chart-lock-{idx}")))
+                    .label("🔒")
+                    .size(MoonButtonSize::Micro)
+                    .variant(if compare_anchor {
+                        MoonButtonVariant::Blue
+                    } else {
+                        MoonButtonVariant::Ghost
+                    })
+                    .selected(compare_anchor)
+                    .bounds(MoonRect::new(left + 21.0, top + 3.0, 15.0, 15.0))
+                    .on_click(move |_, _w, app| {
+                        entity.update(app, |this, cx| this.request_compare_lock(cx));
                     })
                     .render()
             }))
