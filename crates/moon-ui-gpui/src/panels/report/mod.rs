@@ -60,6 +60,7 @@ fn empty_report_query_result() -> ReportQueryResult {
         table: ReportTable {
             cols: db::DISPLAY_COLUMNS,
             rows: Vec::new(),
+            core_uids: Vec::new(),
         },
         totals: (0.0, 0),
     }
@@ -189,6 +190,7 @@ impl ReportPanel {
             table: Rc::new(ReportTable {
                 cols: db::DISPLAY_COLUMNS,
                 rows: Vec::new(),
+                core_uids: Vec::new(),
             }),
             totals: (0.0, 0),
             sort_key,
@@ -438,6 +440,7 @@ impl Render for ReportPanel {
             let visible = Rc::new(vis.clone());
             let row_count = table.rows.len();
             let view = cx.entity();
+            let backend = self.backend.clone();
             let table_state = self.table_state.clone();
             let cols = columns::report_columns(&vis);
             div()
@@ -448,7 +451,7 @@ impl Render for ReportPanel {
                 .min_h_0()
                 .child(
                     MoonDataTable::new("report-table", row_count, move |ri, _window, _app| {
-                        columns::report_data_row(ri, &table, &visible, p)
+                        columns::report_data_row(ri, &table, &visible, &backend, p)
                     })
                     .state(&table_state)
                     .columns(cols)

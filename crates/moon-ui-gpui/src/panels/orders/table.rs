@@ -292,9 +292,13 @@ fn token_cell(
 
     div()
         .id(SharedString::from(format!("ord-tok-{core}-{uid}")))
+        // Кликабельна ВСЯ ячейка (а не только текст токена) — по узкому тикеру в одну
+        // букву иначе сложно попасть. `.right()` колонки → прижимаем содержимое вправо.
+        .w_full()
         .h_full()
         .flex()
         .items_center()
+        .justify_end()
         .cursor_pointer()
         .child(
             MoonText::new(token)

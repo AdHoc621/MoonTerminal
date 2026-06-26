@@ -50,18 +50,18 @@ pub struct ChartTheme {
 impl Default for ChartTheme {
     fn default() -> Self {
         Self {
-            bg: palette::BG,     // --bg, как панели/тулбары
-            grid: palette::GRID, // едва заметная сетка
+            bg: [29, 27, 25],   // тёплый тёмный фон чарта
+            grid: [29, 30, 32], // едва заметная сетка
             grid_alpha: 1.0,
             background_opacity: 0.18,
-            cross: palette::ACCENT, // --accent (янтарный)
+            cross: [76, 54, 29], // приглушённый янтарный
             cross_alpha: 0.5,
             cross_thickness: 1.0,
-            book_bg: palette::BG,      // как фон чарта
+            book_bg: [29, 27, 25],     // как фон чарта
             book_bid: palette::GREEN,  // --long (зелёный)
             book_ask: palette::ORANGE, // --short (оранжевый)
             book_level_alpha: 0.5,
-            panel_bg: palette::BG, // --bg
+            panel_bg: [24, 25, 27],
         }
     }
 }

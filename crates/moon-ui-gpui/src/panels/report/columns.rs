@@ -23,17 +23,106 @@ pub(super) fn report_data_row(
     ri: usize,
     table: &ReportTable,
     vis: &[usize],
+    backend: &Entity<Backend>,
     p: MoonPalette,
 ) -> MoonDataRow {
     let mut cells = Vec::with_capacity(vis.len());
     if let Some(r) = table.rows.get(ri) {
+        let core_uid = table.core_uids.get(ri).copied().unwrap_or(0);
         for &i in vis {
             let cname = table.cols[i];
             let val = r.get(i).unwrap_or(&Value::Null);
-            cells.push(report_data_cell(cname, val, p));
+            if cname == "coin" {
+                cells.push(coin_cell(ri, val, core_uid, backend, p));
+            } else {
+                cells.push(report_data_cell(cname, val, p));
+            }
         }
     }
     MoonDataRow::new(cells)
+}
+
+/// Ячейка монеты в «Отчёте»: кликабельна целиком (акцентным цветом — намёк), клик
+/// открывает чарт монеты НА ЯДРЕ сделки (`core_uid`) — как клик по токену в «Ордерах».
+/// Окно Main НЕ поднимаем (`open_request_activate = false`), как в Ордерах/Детектах.
+fn coin_cell(
+    ri: usize,
+    val: &Value,
+    core_uid: u64,
+    backend: &Entity<Backend>,
+    p: MoonPalette,
+) -> MoonDataCell {
+    let coin = value_to_string(val);
+    let backend = backend.clone();
+    let el = div()
+        .id(SharedString::from(format!("rep-coin-{ri}")))
+        .w_full()
+        .h_full()
+        .flex()
+        .items_center()
+        .cursor_pointer()
+        .child(
+            MoonText::new(coin.clone())
+                .color(MoonTone::Accent.color(p))
+                .font_size(10.0)
+                .line_height(13.0)
+                .mono(true)
+                .uppercase(false)
+                .render(),
+        )
+        .on_click(move |_, _window, app| {
+            if coin.is_empty() {
+                return;
+            }
+            // В БД отчёта монета хранится по-разному: одни ядра пишут базу (`M`), другие —
+            // полный рынок (`VINEUSDT`). Чарту нужен ИМЕННО полный ключ рынка ядра, иначе
+            // подписка не находит рынок → пустой график. Восстанавливаем его по quote ядра
+            // и его market-юниверсу.
+            let market = backend.read(app);
+            let market = resolve_market(market, core_uid, &coin);
+            backend.update(app, |b, bcx| {
+                b.open_request = Some((core_uid, market.clone()));
+                b.open_request_rev = b.open_request_rev.wrapping_add(1);
+                b.open_request_activate = false;
+                bcx.notify();
+            });
+        });
+    MoonDataCell::element(el)
+}
+
+/// Полный ключ рынка ядра по сохранённой в отчёте монете. `coin` может быть базой
+/// (`M`) или уже полным рынком (`MUSDT`). Достраиваем quote ядра (как Ордера/Детекты)
+/// и, если доступен снимок, сверяемся с реальным market-юниверсом ядра.
+fn resolve_market(b: &Backend, core: u64, coin: &str) -> String {
+    let quote = b
+        .config
+        .servers
+        .iter()
+        .find(|s| s.id == core)
+        .map(|s| moon_core::symbol::resolve_quote(&s.market))
+        .unwrap_or_default();
+    let upper = coin.to_ascii_uppercase();
+    // Уже полный рынок (кончается на quote ядра) → берём как есть.
+    let already_full = !quote.is_empty() && upper.len() > quote.len() && upper.ends_with(&quote);
+    let candidate = if already_full || quote.is_empty() {
+        coin.to_string()
+    } else {
+        format!("{coin}{quote}")
+    };
+    // Если снимок ядра доступен — подтверждаем кандидата по юниверсу, иначе ищем рынок,
+    // чья база совпадает с монетой (на случай префиксов вроде `1000PEPEUSDT`).
+    let universe = b.session.market_source().search_markets(core, coin, 32);
+    if universe.is_empty() || universe.iter().any(|m| m == &candidate) {
+        return candidate;
+    }
+    universe
+        .iter()
+        .find(|m| {
+            let q = moon_core::symbol::resolve_quote(m);
+            moon_core::symbol::base_symbol(m, &q) == coin
+        })
+        .cloned()
+        .unwrap_or(candidate)
 }
 
 fn report_data_cell(col: &str, val: &Value, p: MoonPalette) -> MoonDataCell {

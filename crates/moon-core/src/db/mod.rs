@@ -331,6 +331,10 @@ pub fn spawn_writer() -> Option<ReportsHandle> {
 pub struct ReportTable {
     pub cols: &'static [&'static str],
     pub rows: Vec<Vec<Value>>,
+    /// `core_uid` каждой строки (параллельно `rows`). Служебная колонка не входит в
+    /// `cols`/DISPLAY_COLUMNS, но нужна, чтобы клик по монете в отчёте открыл чарт НА
+    /// ТОМ ЯДРЕ, где была сделка (`core_uid` == рантайм-`CoreId`).
+    pub core_uids: Vec<u64>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -483,24 +487,28 @@ pub fn query_reports(
     let col = sort_column(sort_key);
     let dir = if desc { "DESC" } else { "ASC" };
     let select = DISPLAY_COLUMNS.join(", ");
+    // `core_uid` тянем первой (служебной) колонкой — в `cols` не попадает, идёт в `core_uids`.
     let sql = format!(
-        "SELECT {select} FROM closed_sell_reports{where_sql}
+        "SELECT core_uid, {select} FROM closed_sell_reports{where_sql}
          ORDER BY {col} IS NULL, {col} {dir}, closedate DESC LIMIT ?"
     );
     params.push(Box::new(limit as i64));
     let refs: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(|b| b.as_ref()).collect();
 
     let mut rows = Vec::new();
+    let mut core_uids = Vec::new();
     if let Ok(mut stmt) = conn.prepare(&sql) {
         let n = DISPLAY_COLUMNS.len();
         if let Ok(mapped) = stmt.query_map(refs.as_slice(), |r| {
+            let core_uid = r.get::<_, i64>(0)? as u64;
             let mut v = Vec::with_capacity(n);
             for i in 0..n {
-                v.push(r.get::<_, Value>(i)?);
+                v.push(r.get::<_, Value>(i + 1)?);
             }
-            Ok(v)
+            Ok((core_uid, v))
         }) {
-            for row in mapped.flatten() {
+            for (uid, row) in mapped.flatten() {
+                core_uids.push(uid);
                 rows.push(row);
             }
         }
@@ -508,6 +516,7 @@ pub fn query_reports(
     ReportTable {
         cols: DISPLAY_COLUMNS,
         rows,
+        core_uids,
     }
 }
 

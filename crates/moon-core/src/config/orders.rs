@@ -38,7 +38,7 @@ impl Default for LineStyle {
     fn default() -> Self {
         Self {
             color: palette::TEXT_2,
-            thickness: 1.5,
+            thickness: 1.0,
             start_marker: true,
             end_marker: true,
             marker_size: 4.0,
@@ -83,7 +83,7 @@ pub struct PathStyle {
 impl Default for PathStyle {
     fn default() -> Self {
         Self {
-            show: false,
+            show: true,
             color: palette::TEXT_3,
             thickness: 1.0,
             dashed: true,
@@ -137,6 +137,7 @@ impl Default for OrdersStyle {
             start_marker: false,
             end_marker: false,
             knots: false,
+            thickness: 1.5, // ликвидация — чуть толще остальных линий
             ..LineStyle::with(palette::RED)
         };
         let pending_cond = LineStyle {
