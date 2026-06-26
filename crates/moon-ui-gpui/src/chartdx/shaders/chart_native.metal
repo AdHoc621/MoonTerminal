@@ -370,6 +370,10 @@ vertex SOut seg_vertex(uint vid [[vertex_id]], uint iid [[instance_id]],
     float2 a = data_to_px(cv, s.pts.x, s.pts.y);
     float t1 = s.m.z >= 0.5 ? cv.pad : s.pts.z;
     float2 b = data_to_px(cv, t1, s.pts.w);
+    // Снап Y концов к целому пикселю — иначе горизонтальная линия ордера мерцает
+    // толщиной/яркостью при суб-пиксельном дрейфе view_price0 (паритет с round() hline).
+    a.y = round(a.y);
+    b.y = round(b.y);
     float2 dir = b - a;
     float len = max(length(dir), 1e-4);
     dir /= len;

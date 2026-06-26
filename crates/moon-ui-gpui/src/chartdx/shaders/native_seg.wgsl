@@ -47,9 +47,13 @@ struct SOut {
 @vertex
 fn seg_vertex(@builtin(vertex_index) vid: u32, @builtin(instance_index) iid: u32) -> SOut {
     let s = segs[iid];
-    let a = data_to_px(cv, s.pts.x, s.pts.y);
+    let a_raw = data_to_px(cv, s.pts.x, s.pts.y);
     let t1 = select(s.pts.z, cv.pad, s.m.z >= 0.5);
-    let b = data_to_px(cv, t1, s.pts.w);
+    let b_raw = data_to_px(cv, t1, s.pts.w);
+    // Снап Y концов к целому пикселю — иначе горизонтальная линия ордера мерцает
+    // толщиной/яркостью при суб-пиксельном дрейфе view_price0 (паритет с round() hline).
+    let a = vec2<f32>(a_raw.x, round(a_raw.y));
+    let b = vec2<f32>(b_raw.x, round(b_raw.y));
     var dir = b - a;
     let len = max(length(dir), 1e-4);
     dir = dir / len;

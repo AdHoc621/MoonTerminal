@@ -80,6 +80,12 @@ SOut seg_vertex(uint vid : SV_VertexID, uint iid : SV_InstanceID) {
     float2 a = data_to_px(s.pts.x, s.pts.y);
     float t1 = s.m.z >= 0.5 ? cv_pad : s.pts.z;
     float2 b = data_to_px(t1, s.pts.w);
+    // Снап Y концов к целому пикселю. Линия ордера (вход/стоп/трейс) — это seg на
+    // постоянной цене; на дробном Y тонкая линия мерцает толщиной/яркостью при
+    // суб-пиксельном дрейфе view_price0 между ребейками базы и стоит не на той строке,
+    // что round() крестов/hline. X не трогаем (горизонтальная протяжённость гладкая).
+    a.y = round(a.y);
+    b.y = round(b.y);
     float2 dir = b - a;
     float len = max(length(dir), 1e-4);
     dir /= len;
