@@ -109,6 +109,8 @@ impl Render for ChartTabs {
                             this.sync_active_scale(cx);
                             this.sync_inactive_chart_visibility(cx);
                             this.refresh_orderbook_gates(cx);
+                            // Торговый таргет: на compare-вкладке с замком — якорь (как Main-фулскрин).
+                            this.sync_main_chart_target(cx);
                             this.persist_scales(cx);
                             cx.notify();
                         }
@@ -144,6 +146,7 @@ impl Render for ChartTabs {
                         this.sync_active_scale(cx);
                         this.sync_inactive_chart_visibility(cx);
                         this.refresh_orderbook_gates(cx);
+                        this.sync_main_chart_target(cx);
                         this.persist_scales(cx);
                         cx.notify();
                     });

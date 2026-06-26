@@ -432,6 +432,13 @@ impl ChartTabs {
     }
 
     fn main_chart_target(&self, cx: &App) -> Option<(CoreId, String)> {
+        // Залоченный якорь сравнения действует как Main-фулскрин для торговли: его (core, market)
+        // становится таргетом группы → хоткеи F1-F6/S1-S6 и cancel_buy идут на него.
+        if let Some(stack) = self.active_stack() {
+            if let Some(anchor) = stack.read(cx).compare_anchor() {
+                return Some(anchor);
+            }
+        }
         self.main.read(cx).active_target(cx)
     }
 

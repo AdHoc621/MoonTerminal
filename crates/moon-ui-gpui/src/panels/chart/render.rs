@@ -50,6 +50,7 @@ impl Render for ChartPanel {
             | self.chart.set_orders(orders_style)
             | self.chart.set_scale(self.scale)
             | self.chart.set_orderbook_enabled(self.orderbook_enabled)
+            | self.chart.set_orderbook_only(self.orderbook_only)
             | self.chart.set_follow(follow, now_unix_ms());
         // Режим сравнения: пока активен lock, держим Y-окно якоря (перебивает scale каждый кадр —
         // set_locked_y идемпотентен, без изменений вернёт false). Снятие lock — в set_locked_y.
@@ -85,6 +86,12 @@ impl Render for ChartPanel {
         // П.2: кнопка «пин» в левом верхнем углу ВНУТРИ области графика (правее ценовой оси,
         // не на самой оси) — ТОЛЬКО на AddToChart-панелях (с TTL). Пин отменяет авто-закрытие.
         // (idx, pinned, left_px, top_px). PRICE_AXIS_W — логическая ширина оси (rect в девайс-px).
+        // В режиме «только стакан» оси цен нет → кнопки у левого края слота (без сдвига на ось).
+        let axis_off = if self.orderbook_only {
+            0.0
+        } else {
+            moon_chart::PRICE_AXIS_W
+        };
         let pin_btns: Vec<(usize, bool, f32, f32)> = axis_panes
             .iter()
             .filter(|(idx, _, _)| self.chart.pane_is_pinnable(*idx))
@@ -92,7 +99,7 @@ impl Render for ChartPanel {
                 (
                     *idx,
                     self.chart.pane_pinned(*idx),
-                    rect.x / ppp + moon_chart::PRICE_AXIS_W,
+                    rect.x / ppp + axis_off,
                     rect.y / ppp,
                 )
             })
@@ -101,12 +108,21 @@ impl Render for ChartPanel {
         // рядом с пином. Горит на якоре (`is_compare_anchor`). Клик переносит чарт влево и делает
         // его ведущим по цене (обрабатывает стек по `take_compare_lock_request`).
         let compare_anchor = self.is_compare_anchor;
+        let compare_broom_on = self.compare_broom_on;
         let lock_btns: Vec<(usize, f32, f32)> = if self.compare_eligible {
             axis_panes
                 .iter()
-                .map(|(idx, rect, _)| {
-                    (*idx, rect.x / ppp + moon_chart::PRICE_AXIS_W, rect.y / ppp)
-                })
+                .map(|(idx, rect, _)| (*idx, rect.x / ppp + axis_off, rect.y / ppp))
+                .collect()
+        } else {
+            Vec::new()
+        };
+        // Кнопка-метла — ТОЛЬКО на якоре (рядом с горящим замком). Переключает «только стакан»
+        // у соседей якоря.
+        let broom_btns: Vec<(usize, f32, f32)> = if self.compare_eligible && compare_anchor {
+            axis_panes
+                .iter()
+                .map(|(idx, rect, _)| (*idx, rect.x / ppp + axis_off, rect.y / ppp))
                 .collect()
         } else {
             Vec::new()
@@ -612,6 +628,24 @@ impl Render for ChartPanel {
                     .bounds(MoonRect::new(left + 21.0, top + 3.0, 15.0, 15.0))
                     .on_click(move |_, _w, app| {
                         entity.update(app, |this, cx| this.request_compare_lock(cx));
+                    })
+                    .render()
+            }))
+            .children(broom_btns.into_iter().map(|(idx, left, top)| {
+                // Метла справа от замка (на якоре): «только стакан» у соседей.
+                let entity = cx.entity();
+                MoonButton::new(SharedString::from(format!("chart-broom-{idx}")))
+                    .label("🧹")
+                    .size(MoonButtonSize::Micro)
+                    .variant(if compare_broom_on {
+                        MoonButtonVariant::Blue
+                    } else {
+                        MoonButtonVariant::Ghost
+                    })
+                    .selected(compare_broom_on)
+                    .bounds(MoonRect::new(left + 39.0, top + 3.0, 15.0, 15.0))
+                    .on_click(move |_, _w, app| {
+                        entity.update(app, |this, cx| this.request_compare_broom(cx));
                     })
                     .render()
             }))

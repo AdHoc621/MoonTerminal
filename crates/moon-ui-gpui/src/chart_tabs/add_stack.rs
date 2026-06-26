@@ -6,9 +6,9 @@ use gpui::*;
 use moon_ui::MoonVirtualListScrollHandle;
 
 use super::stack::{
-    ChartStackEntry, HIGHLIGHT, apply_compare, handle_compare_lock_requests, render_chart_stack,
-    resolve_layout, set_panels_auto_pin, set_panels_orderbook_enabled, set_panels_scale,
-    set_panels_show_zone,
+    ChartStackEntry, CompareRole, HIGHLIGHT, apply_compare, handle_compare_broom_requests,
+    handle_compare_lock_requests, render_chart_stack, resolve_layout, set_panels_auto_pin,
+    set_panels_orderbook_enabled, set_panels_scale, set_panels_show_zone,
 };
 use crate::Backend;
 use crate::chart_persist::{StackLayoutMode, StackOrientation};
@@ -50,6 +50,8 @@ pub(crate) struct AddChartStack {
     compare_anchor: Option<(CoreId, String)>,
     /// Общее Y-окно сравнения `(center, range)` — следует за последней изменённой панелью.
     compare_y: Option<(f32, f32)>,
+    /// Режим метлы: соседи якоря показывают «только стакан» (чарт+ось цен скрыты).
+    compare_orderbook_only: bool,
     /// Скролл-хэндл вертикального MoonVirtualList (scroll-режим стека).
     scroll: MoonVirtualListScrollHandle,
 }
@@ -80,12 +82,55 @@ impl AddChartStack {
             orderbook_suspended: false,
             compare_anchor: None,
             compare_y: None,
+            compare_orderbook_only: false,
             scroll: MoonVirtualListScrollHandle::new(),
         }
     }
 
-    /// Синхронизировать режим сравнения: забрать клики замка (сменить/снять якорь, переставить
-    /// влево), затем навязать общее Y-окно/флаги панелям. В вертикали сравнение выключено.
+    pub(crate) fn compare_anchor(&self) -> Option<(CoreId, String)> {
+        self.compare_anchor.clone()
+    }
+
+    /// Роль слота для размеров метлы: Normal (метла выкл), Anchor (с замком) или Follower (стакан).
+    fn compare_role(&self, ix: usize) -> CompareRole {
+        if !self.compare_orderbook_only {
+            return CompareRole::Normal;
+        }
+        match self.charts.get(ix) {
+            Some(e) => {
+                let is_anchor = self
+                    .compare_anchor
+                    .as_ref()
+                    .is_some_and(|k| k.0 == e.core && k.1 == e.market);
+                if is_anchor {
+                    CompareRole::Anchor
+                } else {
+                    CompareRole::Follower
+                }
+            }
+            None => CompareRole::Normal,
+        }
+    }
+
+    pub(crate) fn compare_orderbook_only(&self) -> bool {
+        self.compare_orderbook_only
+    }
+
+    /// Восстановить состояние сравнения из charts.json (якорь + режим метлы) и применить.
+    pub(crate) fn restore_compare(
+        &mut self,
+        anchor: Option<(CoreId, String)>,
+        orderbook_only: bool,
+        cx: &mut Context<Self>,
+    ) {
+        self.compare_anchor = anchor;
+        self.compare_orderbook_only = orderbook_only;
+        self.sync_compare(cx);
+    }
+
+    /// Синхронизировать режим сравнения: забрать клики замка/метлы (сменить/снять якорь, переставить
+    /// влево; переключить «только стакан»), затем навязать общее Y-окно/флаги панелям. В вертикали
+    /// сравнение выключено.
     fn sync_compare(&mut self, cx: &mut Context<Self>) {
         let horizontal = self
             .layout_orientation
@@ -95,11 +140,16 @@ impl AddChartStack {
             self.compare_anchor = None;
         }
         handle_compare_lock_requests(&mut self.charts, &mut self.compare_anchor, cx);
+        handle_compare_broom_requests(&self.charts, &mut self.compare_orderbook_only, cx);
+        if self.compare_anchor.is_none() {
+            self.compare_orderbook_only = false;
+        }
         apply_compare(
             &self.charts,
             &self.compare_anchor,
             &mut self.compare_y,
             horizontal,
+            self.compare_orderbook_only,
             cx,
         );
     }
@@ -439,7 +489,7 @@ impl Render for AddChartStack {
                     .filter(|e| !e.vacated)
                     .map(|e| e.panel.clone())
             },
-            move |s, ix, panel, size, flex, horizontal, border, _ent| {
+            move |s, ix, panel, size, flex, min_w, horizontal, border, _ent| {
                 let (id, fresh) = match s.charts.get(ix) {
                     Some(e) => (
                         format!("add-chart-stack-tile-{}-{}-{}", s.num, e.core, e.market),
@@ -458,15 +508,17 @@ impl Render for AddChartStack {
                 tile = if horizontal { tile.h_full() } else { tile.w_full() };
                 if flex {
                     tile = tile.flex_1();
-                    tile = if horizontal { tile.min_w(px(0.0)) } else { tile.min_h(px(0.0)) };
+                    let m = min_w.unwrap_or(0.0);
+                    tile = if horizontal { tile.min_w(px(m)) } else { tile.min_h(px(m)) };
                     if let Some(v) = size {
                         tile = if horizontal { tile.max_w(px(v)) } else { tile.max_h(px(v)) };
                     }
                 } else if let Some(v) = size {
+                    // Фикс. БЕЗ сжатия (min=max=v): в SCROLL тайлы переполняют контейнер → скролл.
                     tile = if horizontal {
-                        tile.w(px(v)).min_w(px(0.0))
+                        tile.w(px(v)).min_w(px(v))
                     } else {
-                        tile.h(px(v)).min_h(px(0.0))
+                        tile.h(px(v)).min_h(px(v))
                     };
                 }
                 // Подсветка только что появившегося графика: яркая акцентная рамка поверх, пульс
@@ -496,6 +548,7 @@ impl Render for AddChartStack {
                     .children(highlight)
                     .into_any_element()
             },
+            |s, ix| s.compare_role(ix),
         )
     }
 }

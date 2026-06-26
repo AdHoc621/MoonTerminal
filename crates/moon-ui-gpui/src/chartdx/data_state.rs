@@ -22,6 +22,7 @@ impl ChartDataState {
             origin: (0.0, 0.0),
             scene_visible: false,
             orderbook_enabled: true,
+            orderbook_only: false,
             order_highlight: None,
             order_drag_preview: None,
             market_source: None,
@@ -452,7 +453,13 @@ impl ChartDataState {
                 pr.gpu_prepare_dirty = true;
                 pixels_changed = true;
             }
-            let price_axis_w = moon_chart::PRICE_AXIS_W * self.last_ppp;
+            // Режим «только стакан» (метла в сравнении): ось цен убираем, стакан на всю ширину,
+            // область чарта схлопываем (combo/grid/оси рисуются в ~0px → невидимы).
+            let price_axis_w = if self.orderbook_only {
+                0.0
+            } else {
+                moon_chart::PRICE_AXIS_W * self.last_ppp
+            };
             let time_axis_h = moon_chart::TIME_AXIS_H * self.last_ppp;
             let plot_h = (rect.h - time_axis_h).max(1.0);
             // П.3: при узком графике стакан не должен съедать половину. База — GLASS_ZONE_PX
@@ -462,8 +469,10 @@ impl ChartDataState {
             let glass_cap = rect.w * 0.5;
             let glass_base = moon_chart::GLASS_ZONE_PX.min(glass_cap);
             let chart_w_base = rect.w - price_axis_w - glass_base;
-            // Стакан выключен (per-окно) → зона стакана = 0, график занимает всю ширину.
-            let glass_w = if !self.orderbook_enabled {
+            // only → стакан на всю ширину; выкл → 0; иначе адаптивная зона.
+            let glass_w = if self.orderbook_only {
+                (rect.w - price_axis_w).max(1.0)
+            } else if !self.orderbook_enabled {
                 0.0
             } else if chart_w_base < glass_base * 2.0 {
                 (moon_chart::GLASS_ZONE_PX * 0.8).min(glass_cap)
@@ -765,10 +774,13 @@ impl ChartDataState {
                 pr.gpu_prepare_dirty = true;
                 pixels_changed = true;
             }
-            // Флаг стакана в pane (для гейта угловой подписи в render_state/text).
-            pr.orderbook_enabled = self.orderbook_enabled;
+            // Флаг стакана в pane (для гейта угловой подписи в render_state/text). В режиме
+            // «только стакан» стакан принудительно включён (даже если галка «Стакан» снята).
+            pr.orderbook_only = self.orderbook_only;
+            let orderbook_on = self.orderbook_enabled || self.orderbook_only;
+            pr.orderbook_enabled = orderbook_on;
             // Стакан выключен (per-окно) → уровни не строим и не грузим (а если были — чистим).
-            if !self.orderbook_enabled {
+            if !orderbook_on {
                 if pr.last_book_rev != u64::MAX {
                     pr.layers.set_orderbook(Vec::new());
                     pr.last_book_rev = u64::MAX;

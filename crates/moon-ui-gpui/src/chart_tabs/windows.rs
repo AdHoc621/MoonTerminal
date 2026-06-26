@@ -227,6 +227,8 @@ impl ChartTabs {
                     layout_orientation: None,
                     custom_coins: None,
                     custom_label: None,
+                    compare_anchor: None,
+                    compare_orderbook_only: false,
                 };
                 f(&mut s);
                 b.chart_specs.push(s);
@@ -355,6 +357,8 @@ impl ChartTabs {
                         Option<bool>,
                         Option<bool>,
                         Option<bool>,
+                        Option<(CoreId, String)>,
+                        bool,
                     )> = {
                         let specs = &this.backend.read(cx).chart_specs;
                         specs
@@ -370,11 +374,15 @@ impl ChartTabs {
                                         s.orderbook_enabled,
                                         s.show_zone,
                                         s.auto_pin,
+                                        s.compare_anchor.clone(),
+                                        s.compare_orderbook_only,
                                     )
                                 })
                             })
                     };
-                    if let Some((coins, label, layout, orientation, ob, sz, ap)) = custom {
+                    if let Some((coins, label, layout, orientation, ob, sz, ap, anchor, broom)) =
+                        custom
+                    {
                         panel.update(cx, |s, c| {
                             s.set_orientation(
                                 Some(orientation.unwrap_or(StackOrientation::Horizontal)),
@@ -395,6 +403,9 @@ impl ChartTabs {
                             }
                             s.pin_all(c);
                         });
+                        if anchor.is_some() || broom {
+                            panel.update(cx, |s, c| s.restore_compare(anchor.clone(), broom, c));
+                        }
                         if let Some(label) = label {
                             this.custom_labels.insert(n, label);
                         }
@@ -673,15 +684,23 @@ impl DetachedChartHost {
         if !is_custom {
             return;
         }
-        let coins = self.panel.read(cx).coins(cx);
+        let (coins, anchor, broom) = {
+            let p = self.panel.read(cx);
+            (p.coins(cx), p.compare_anchor(), p.compare_orderbook_only())
+        };
         self.backend.update(cx, |b, _| {
             if let Some(s) = b
                 .chart_specs
                 .iter_mut()
                 .find(|s| s.group == group && s.num == num && s.bucket() == bucket)
             {
-                if s.custom_coins.as_deref() != Some(coins.as_slice()) {
+                if s.custom_coins.as_deref() != Some(coins.as_slice())
+                    || s.compare_anchor != anchor
+                    || s.compare_orderbook_only != broom
+                {
                     s.custom_coins = Some(coins);
+                    s.compare_anchor = anchor;
+                    s.compare_orderbook_only = broom;
                     b.chart_specs_dirty = true;
                 }
             }
@@ -833,6 +852,8 @@ impl DetachedChartHost {
                     layout_orientation: Some(orientation),
                     custom_coins: None,
                     custom_label: None,
+                    compare_anchor: None,
+                    compare_orderbook_only: false,
                 });
             }
             bk.chart_specs_dirty = true;
@@ -877,6 +898,8 @@ impl DetachedChartHost {
                     layout_orientation: None,
                     custom_coins: None,
                     custom_label: None,
+                    compare_anchor: None,
+                    compare_orderbook_only: false,
                 });
             }
             bk.chart_specs_dirty = true;
@@ -913,6 +936,8 @@ impl DetachedChartHost {
                     layout_orientation: None,
                     custom_coins: None,
                     custom_label: None,
+                    compare_anchor: None,
+                    compare_orderbook_only: false,
                 });
             }
             bk.chart_specs_dirty = true;
@@ -949,6 +974,8 @@ impl DetachedChartHost {
                     layout_orientation: None,
                     custom_coins: None,
                     custom_label: None,
+                    compare_anchor: None,
+                    compare_orderbook_only: false,
                 });
             }
             bk.chart_specs_dirty = true;
@@ -984,6 +1011,8 @@ impl DetachedChartHost {
                     layout_orientation: None,
                     custom_coins: None,
                     custom_label: None,
+                    compare_anchor: None,
+                    compare_orderbook_only: false,
                 });
             }
             bk.chart_specs_dirty = true;

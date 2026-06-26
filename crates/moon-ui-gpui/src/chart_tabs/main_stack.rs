@@ -8,9 +8,9 @@ use gpui::*;
 use moon_ui::MoonVirtualListScrollHandle;
 
 use super::stack::{
-    ChartStackEntry, apply_compare, handle_compare_lock_requests, render_chart_stack,
-    resolve_layout, retain_nonempty_panels, set_panels_auto_pin, set_panels_orderbook_enabled,
-    set_panels_scale, set_panels_show_zone,
+    ChartStackEntry, CompareRole, apply_compare, handle_compare_broom_requests,
+    handle_compare_lock_requests, render_chart_stack, resolve_layout, retain_nonempty_panels,
+    set_panels_auto_pin, set_panels_orderbook_enabled, set_panels_scale, set_panels_show_zone,
 };
 use crate::Backend;
 use crate::chart_persist::{StackLayoutMode, StackOrientation};
@@ -49,6 +49,8 @@ pub(crate) struct MainChartStack {
     compare_anchor: Option<(CoreId, String)>,
     /// Общее Y-окно сравнения, следует за последней изменённой панелью.
     compare_y: Option<(f32, f32)>,
+    /// Режим метлы: соседи якоря показывают «только стакан».
+    compare_orderbook_only: bool,
     /// Армирован ли one-shot таймер авто-закрытия по неактивности (config `main_idle_close_secs`).
     /// Тикает ~1 Гц, пока фича включена и есть графики; сам пере-армится. См. `arm_idle_timer`.
     idle_timer_armed: bool,
@@ -82,6 +84,7 @@ impl MainChartStack {
             layout_orientation: None,
             compare_anchor: None,
             compare_y: None,
+            compare_orderbook_only: false,
             idle_timer_armed: false,
             scroll: MoonVirtualListScrollHandle::new(),
         };
@@ -140,15 +143,42 @@ impl MainChartStack {
         if !horizontal {
             self.compare_anchor = None;
         }
-        let changed = handle_compare_lock_requests(&mut self.charts, &mut self.compare_anchor, cx);
+        let mut changed =
+            handle_compare_lock_requests(&mut self.charts, &mut self.compare_anchor, cx);
+        changed |= handle_compare_broom_requests(&self.charts, &mut self.compare_orderbook_only, cx);
+        if self.compare_anchor.is_none() {
+            self.compare_orderbook_only = false;
+        }
         apply_compare(
             &self.charts,
             &self.compare_anchor,
             &mut self.compare_y,
             horizontal,
+            self.compare_orderbook_only,
             cx,
         );
         changed
+    }
+
+    /// Роль слота для размеров метлы: Normal (метла выкл), Anchor (с замком) или Follower (стакан).
+    fn compare_role(&self, ix: usize) -> CompareRole {
+        if !self.compare_orderbook_only {
+            return CompareRole::Normal;
+        }
+        match self.charts.get(ix) {
+            Some(e) => {
+                let is_anchor = self
+                    .compare_anchor
+                    .as_ref()
+                    .is_some_and(|k| k.0 == e.core && k.1 == e.market);
+                if is_anchor {
+                    CompareRole::Anchor
+                } else {
+                    CompareRole::Follower
+                }
+            }
+            None => CompareRole::Normal,
+        }
     }
 
     pub(super) fn open_or_focus(&mut self, core: CoreId, market: String, cx: &mut Context<Self>) {
@@ -481,12 +511,14 @@ impl MainChartStack {
     }
 
     #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments)]
     fn render_tile(
         &self,
         ix: usize,
         panel: Entity<ChartPanel>,
         size: Option<f32>,
         flex: bool,
+        min_w: Option<f32>,
         horizontal: bool,
         border: Rgba,
         entity: Entity<Self>,
@@ -517,19 +549,17 @@ impl MainChartStack {
         tile = if horizontal { tile.h_full() } else { tile.w_full() };
         if flex {
             tile = tile.flex_1();
-            tile = if horizontal {
-                tile.min_w(px(0.0))
-            } else {
-                tile.min_h(px(0.0))
-            };
+            let m = min_w.unwrap_or(0.0);
+            tile = if horizontal { tile.min_w(px(m)) } else { tile.min_h(px(m)) };
             if let Some(v) = size {
                 tile = if horizontal { tile.max_w(px(v)) } else { tile.max_h(px(v)) };
             }
         } else if let Some(v) = size {
+            // Фикс. БЕЗ сжатия (min=max=v): в SCROLL тайлы переполняют контейнер → есть скролл.
             tile = if horizontal {
-                tile.w(px(v)).min_w(px(0.0))
+                tile.w(px(v)).min_w(px(v))
             } else {
-                tile.h(px(v)).min_h(px(0.0))
+                tile.h(px(v)).min_h(px(v))
             };
         }
         tile.child(div().size_full().relative().overflow_hidden().child(panel))
@@ -558,7 +588,7 @@ impl Render for MainChartStack {
             let panel = self.charts[active].panel.clone();
             let entity = cx.entity();
             return self
-                .render_tile(active, panel, None, false, false, rgb(palette.border), entity)
+                .render_tile(active, panel, None, false, None, false, rgb(palette.border), entity)
                 .size_full()
                 .border_0()
                 .into_any_element();
@@ -590,10 +620,11 @@ impl Render for MainChartStack {
             &self.scroll,
             border,
             |s, ix| s.charts.get(ix).map(|e| e.panel.clone()),
-            |s, ix, panel, size, flex, horizontal, border, ent| {
-                s.render_tile(ix, panel, size, flex, horizontal, border, ent)
+            |s, ix, panel, size, flex, min_w, horizontal, border, ent| {
+                s.render_tile(ix, panel, size, flex, min_w, horizontal, border, ent)
                     .into_any_element()
             },
+            |s, ix| s.compare_role(ix),
         )
     }
 }

@@ -250,19 +250,11 @@ impl RenderState {
             let plot_bottom = plot_top + plot_h;
             let plot_right = plot_left + plot_w;
 
-            if plot_w < 60.0 || plot_h < 60.0 || view.price_to_px <= 0.0 {
-                continue;
-            }
-
-            if !firetest_text_drawn {
-                self.draw_firetest_text(ctx, plot_left, plot_top, plot_w, plot_h, ink)?;
-                firetest_text_drawn = true;
-            }
-
             // Угловая подпись: имя ядра + тикер, светлый текст на прозрачной плашке (её строит
             // render_state по `caption_w`). Якорь правым краем: есть стакан → у края панели (над
             // стаканом), нет стакана → у края плота (в области графика). Тот же выбор повторён в
-            // render_state для плашки — держать синхронно.
+            // render_state для плашки — держать синхронно. Рисуем ДО гейта по `plot_w`, чтобы в
+            // режиме «только стакан» (чарт схлопнут) подпись осталась над стаканом.
             {
                 let right_edge = if orderbook_enabled {
                     pane_right
@@ -285,6 +277,16 @@ impl RenderState {
                     self.panes[idx].caption_w = cap_w;
                     readout_metrics_changed = true;
                 }
+            }
+
+            // Дальше — оси/курсор/сетка, только для нормального (не схлопнутого) чарта.
+            if plot_w < 60.0 || plot_h < 60.0 || view.price_to_px <= 0.0 {
+                continue;
+            }
+
+            if !firetest_text_drawn {
+                self.draw_firetest_text(ctx, plot_left, plot_top, plot_w, plot_h, ink)?;
+                firetest_text_drawn = true;
             }
 
             let price_to_px = view.price_to_px / sf;

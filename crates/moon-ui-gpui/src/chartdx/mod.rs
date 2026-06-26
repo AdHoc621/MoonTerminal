@@ -208,6 +208,8 @@ struct PaneRender {
     active: bool,
     /// Стакан включён на этой панели (per-окно). Выкл → не рисуем стекло и угловую подпись.
     orderbook_enabled: bool,
+    /// Режим «только стакан» этой панели (чарт+ось цен скрыты, стакан на всю ширину).
+    orderbook_only: bool,
     /// CPU/base inputs changed and D3D prepare must upload/bake resident resources before draw.
     /// Cursor-only presents leave this false.
     gpu_prepare_dirty: bool,
@@ -264,6 +266,7 @@ impl PaneRender {
             cached_order_price: None,
             active: false,
             orderbook_enabled: true,
+            orderbook_only: false,
             gpu_prepare_dirty: true,
         }
     }
@@ -452,6 +455,9 @@ struct ChartDataState {
     /// Показывать ли стакан (per-окно/панель). Выкл → glass_w=0, уровни не строятся, подпись не
     /// рисуется. Применяется ко всем панелям этого движка.
     orderbook_enabled: bool,
+    /// Режим «только стакан» (кнопка-метла в сравнении): чарт и ось цен скрыты, стакан на всю
+    /// ширину. Применяется ко всем панелям этого движка (у соседей якоря).
+    orderbook_only: bool,
     /// Интерактивная подсветка линии ордера (hover/drag). Это не меняет рыночные данные:
     /// только заставляет редкую пересборку userdata при смене uid.
     order_highlight: Option<(CoreId, u64)>,

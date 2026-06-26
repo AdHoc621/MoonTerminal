@@ -133,6 +133,12 @@ pub struct ChartPanel {
     /// Навязанное Y-окно `(center, range)` от якоря (lock сравнения). None = свободный Y.
     /// Применяется в render через `set_locked_y` движка.
     locked_y: Option<(f32, f32)>,
+    /// Режим «только стакан» (кнопка-метла у соседей якоря): чарт+ось цен скрыты, виден стакан.
+    orderbook_only: bool,
+    /// Кликнули метлу — стек заберёт запрос в observe (переключает режим для соседей).
+    compare_broom_pending: bool,
+    /// Режим метлы включён на вкладке (для подсветки кнопки-метлы на якоре). Ставит стек.
+    compare_broom_on: bool,
     view_dirty: bool,
     last_adaptive_notify_ms: f64,
     /// Последний scale_factor окна (ставится в render). Нужен data prepare path, у которого
@@ -257,6 +263,9 @@ impl ChartPanel {
             is_compare_anchor: false,
             compare_lock_pending: false,
             locked_y: None,
+            orderbook_only: false,
+            compare_broom_pending: false,
+            compare_broom_on: false,
             view_dirty: true,
             last_adaptive_notify_ms: 0.0,
             last_ppp: 1.0,
@@ -347,6 +356,9 @@ impl ChartPanel {
             is_compare_anchor: false,
             compare_lock_pending: false,
             locked_y: None,
+            orderbook_only: false,
+            compare_broom_pending: false,
+            compare_broom_on: false,
             view_dirty: true,
             last_adaptive_notify_ms: 0.0,
             last_ppp: 1.0,
@@ -473,6 +485,34 @@ impl ChartPanel {
     /// Забрать флаг «кликнули замок» (стек дёргает в своём observe). Сбрасывает его.
     pub fn take_compare_lock_request(&mut self) -> bool {
         std::mem::take(&mut self.compare_lock_pending)
+    }
+
+    /// Клик по метле → выставить запрос (стек заберёт в observe, переключит режим у соседей).
+    fn request_compare_broom(&mut self, cx: &mut Context<Self>) {
+        self.compare_broom_pending = true;
+        cx.notify();
+    }
+
+    /// Забрать флаг «кликнули метлу». Сбрасывает его.
+    pub fn take_compare_broom_request(&mut self) -> bool {
+        std::mem::take(&mut self.compare_broom_pending)
+    }
+
+    /// Режим «только стакан» (метла): чарт+ось цен скрыты, стакан на всю ширину. Применяется в render.
+    pub fn set_orderbook_only(&mut self, only: bool, cx: &mut Context<Self>) {
+        if self.orderbook_only != only {
+            self.orderbook_only = only;
+            self.view_dirty = true;
+            cx.notify();
+        }
+    }
+
+    /// Подсветка кнопки-метлы на якоре (режим метлы включён на вкладке). Ставит стек.
+    pub fn set_compare_broom_on(&mut self, on: bool, cx: &mut Context<Self>) {
+        if self.compare_broom_on != on {
+            self.compare_broom_on = on;
+            cx.notify();
+        }
     }
 
     /// Текущее Y-окно `(center, range)` (для стека — окно якоря). None если нет панелей.

@@ -314,6 +314,18 @@ impl ChartEngine {
         true
     }
 
+    /// Режим «только стакан» (метла в сравнении): чарт+ось цен скрыты, стакан на всю ширину.
+    /// Возвращает `true` при изменении.
+    pub fn set_orderbook_only(&mut self, only: bool) -> bool {
+        let mut data = self.data.borrow_mut();
+        if data.orderbook_only == only {
+            return false;
+        }
+        data.orderbook_only = only;
+        data.mark_view_dirty();
+        true
+    }
+
     /// Глобальный live-follow из тулбара (Live/Пауза) для единственной панели этого
     /// `ChartEngine`. Реагирует только на смену самого глобального флага (явный клик).
     /// Пан/rejoin отдельной панели живут в её `view.follow`; сюда уже сведённое значение

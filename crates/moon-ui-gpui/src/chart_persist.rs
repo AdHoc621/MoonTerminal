@@ -98,6 +98,13 @@ pub struct ChartTabSpec {
     /// Имя кастомной вкладки (редактируется в попапе ⚙). None → дефолтная метка «Набор N».
     #[serde(default)]
     pub custom_label: Option<String>,
+    /// Якорь режима сравнения `(core, market)` — ведущий по цене чарт (горит замок, стоит слева).
+    /// None = сравнение выключено. Только для горизонтальных (обычно кастомных) вкладок.
+    #[serde(default)]
+    pub compare_anchor: Option<(CoreId, String)>,
+    /// Режим «только стакан» у соседей сравнения (кнопка-метла): чарт+ось цен скрыты, виден стакан.
+    #[serde(default)]
+    pub compare_orderbook_only: bool,
 }
 
 impl ChartTabSpec {

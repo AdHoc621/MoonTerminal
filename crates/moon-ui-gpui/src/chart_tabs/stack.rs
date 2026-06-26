@@ -5,7 +5,10 @@
 use std::time::{Duration, Instant};
 
 use gpui::*;
-use moon_ui::{MoonScrollbarVisibility, MoonVirtualList, MoonVirtualListScrollHandle, h_flex, v_flex};
+use moon_ui::{
+    MoonScrollableElement, MoonScrollbarVisibility, MoonVirtualList, MoonVirtualListScrollHandle,
+    h_flex, v_flex,
+};
 
 use crate::chart_persist::StackLayoutMode;
 use crate::panels::ChartPanel;
@@ -38,6 +41,23 @@ impl ChartStackEntry {
 
 /// Дефолтная высота слота в режиме Scroll (px), когда у вкладки нет своей.
 pub(super) const DEFAULT_SCROLL_HEIGHT: u16 = 300;
+
+/// Ширина узкого слота соседа якоря в режиме метлы (= ширина стакана `GLASS_ZONE_PX` + рамки).
+pub(super) const COMPARE_BOOK_W: f32 = moon_chart::GLASS_ZONE_PX + 2.0;
+
+/// Мин. ширина слота ЯКОРЯ при метле в FIT-stretch (width=0): сам график ≥ 1.5× стакана, плюс ось
+/// цен и собственный стакан якоря (`1.5·GLASS + PRICE_AXIS_W + GLASS`). Якорь flex (растёт), но не
+/// ужимается ниже этого минимума.
+pub(super) const COMPARE_ANCHOR_MIN_W: f32 =
+    moon_chart::GLASS_ZONE_PX * 2.5 + moon_chart::PRICE_AXIS_W;
+
+/// Роль слота в режиме сравнения (для размеров при метле). `Normal` — обычный размер.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum CompareRole {
+    Normal,
+    Anchor,
+    Follower,
+}
 
 /// Длительность подсветки рамки только что появившегося графика (пульс).
 pub(super) const HIGHLIGHT: Duration = Duration::from_millis(2600);
@@ -146,6 +166,25 @@ pub(super) fn handle_compare_lock_requests<S: 'static>(
     true
 }
 
+/// Обработать клики по метле (режим «только стакан» у соседей): забрать pending у всех панелей,
+/// при клике — переключить `broom_on`. Возвращает true при изменении.
+pub(super) fn handle_compare_broom_requests<S: 'static>(
+    entries: &[ChartStackEntry],
+    broom_on: &mut bool,
+    cx: &mut Context<S>,
+) -> bool {
+    let mut clicked = false;
+    for e in entries.iter() {
+        if e.panel.update(cx, |p, _| p.take_compare_broom_request()) {
+            clicked = true;
+        }
+    }
+    if clicked {
+        *broom_on = !*broom_on;
+    }
+    clicked
+}
+
 /// Применить состояние сравнения к панелям: `compare_eligible = horizontal` на всех; при активном
 /// сравнении (horizontal И есть якорь) — пометить якорь и навязать ВСЕМ его Y-окно; иначе снять
 /// lock. Ведущее окно — ВСЕГДА у якоря (он стабилен между проходами observe, поэтому синхронизация
@@ -160,6 +199,7 @@ pub(super) fn apply_compare<S: 'static>(
     anchor: &Option<(CoreId, String)>,
     shared: &mut Option<(f32, f32)>,
     horizontal: bool,
+    orderbook_only: bool,
     cx: &mut Context<S>,
 ) {
     let key = anchor
@@ -173,12 +213,16 @@ pub(super) fn apply_compare<S: 'static>(
                 p.set_compare_eligible(horizontal, c);
                 p.set_compare_anchor(false, c);
                 p.set_locked_y(None, c);
+                p.set_orderbook_only(false, c);
+                p.set_compare_broom_on(false, c);
             });
         }
         return;
     }
     let key = key.unwrap();
-    // Ведущее окно — текущее окно якоря (стабильно в пределах цикла observe → сходимость).
+    // Ведущее окно — текущее окно ЯКОРЯ (стабильно в пределах цикла observe → сходимость).
+    // Якорь НЕ лочим: он остаётся в своём режиме (масштаб вкладки/авто/пан), а соседи копируют
+    // его живое окно. Иначе lock на якоре заморозил бы Y и масштаб/авто перестали бы работать.
     let window = entries
         .iter()
         .find(|e| e.core == key.0 && e.market == key.1)
@@ -189,7 +233,11 @@ pub(super) fn apply_compare<S: 'static>(
         e.panel.update(cx, |p, c| {
             p.set_compare_eligible(true, c);
             p.set_compare_anchor(is_anchor, c);
-            p.set_locked_y(window, c);
+            // Якорь свободен (respects scale/auto); соседи залочены на его окно.
+            p.set_locked_y(if is_anchor { None } else { window }, c);
+            // Метла: «только стакан» у соседей; якорь полноценный, на нём горит кнопка-метла.
+            p.set_orderbook_only(!is_anchor && orderbook_only, c);
+            p.set_compare_broom_on(is_anchor && orderbook_only, c);
         });
     }
 }
@@ -212,7 +260,7 @@ pub(super) fn retain_nonempty_panels(entries: &mut Vec<ChartStackEntry>, cx: &Ap
 /// одну плитку. FIT/COMPRESS итерируют переданный `s` (это `&self` вызывающего стека); вертикальный
 /// SCROLL берёт панели через weak-entity в App-контексте (иначе RefCell-паника при render).
 #[allow(clippy::too_many_arguments)]
-pub(super) fn render_chart_stack<S, P, T>(
+pub(super) fn render_chart_stack<S, P, T, R>(
     base_id: &str,
     s: &S,
     entity: Entity<S>,
@@ -225,13 +273,19 @@ pub(super) fn render_chart_stack<S, P, T>(
     border: Rgba,
     panel_at: P,
     tile: T,
+    role: R,
 ) -> AnyElement
 where
     S: Render + 'static,
     P: Fn(&S, usize) -> Option<Entity<ChartPanel>> + Copy + 'static,
-    T: Fn(&S, usize, Entity<ChartPanel>, Option<f32>, bool, bool, Rgba, Entity<S>) -> AnyElement
+    // tile(s, ix, panel, size, flex, min_w, horizontal, border, ent)
+    //   flex=true:  size → max_w, min_w → min_w (якорь-stretch).
+    //   flex=false: size → фикс. ширина БЕЗ сжатия (SCROLL переполняет → скролл).
+    T: Fn(&S, usize, Entity<ChartPanel>, Option<f32>, bool, Option<f32>, bool, Rgba, Entity<S>) -> AnyElement
         + Copy
         + 'static,
+    // Роль слота в режиме метлы (Anchor берёт свою ширину, Follower — стакан). Normal = обычный.
+    R: Fn(&S, usize) -> CompareRole + Copy + 'static,
 {
     if scroll && !compress {
         if horizontal {
@@ -241,15 +295,32 @@ where
             let mut tiles: Vec<AnyElement> = Vec::with_capacity(count);
             for ix in 0..count {
                 if let Some(panel) = panel_at(s, ix) {
-                    tiles.push(tile(s, ix, panel, Some(cfg_h), false, true, border, entity.clone()));
+                    // SCROLL+метла: сосед — фикс. ширина стакана; якорь/обычный — своя ширина cfg_h.
+                    let w = if role(s, ix) == CompareRole::Follower {
+                        COMPARE_BOOK_W
+                    } else {
+                        cfg_h
+                    };
+                    tiles.push(tile(
+                        s,
+                        ix,
+                        panel,
+                        Some(w),
+                        false,
+                        None,
+                        true,
+                        border,
+                        entity.clone(),
+                    ));
                 }
             }
+            // overflow_x_scrollbar(): гориз. скролл + ВИДИМЫЙ скроллбар (moonui). Тайлы не сжимаются
+            // (min=max) → переполняют → есть что скроллить.
             return div()
-                .id(format!("{base_id}-hscroll"))
                 .relative()
                 .size_full()
-                .overflow_x_scroll()
                 .child(h_flex().h_full().children(tiles))
+                .overflow_x_scrollbar()
                 .into_any_element();
         }
         // Вертикальный SCROLL: фикс. высота, виртуальный список со скроллбаром. Плитку строим через
@@ -267,7 +338,7 @@ where
                 let Some(panel) = panel_at(s, ix) else {
                     return div().into_any_element();
                 };
-                tile(s, ix, panel, Some(cfg_h), false, false, border, ent.clone())
+                tile(s, ix, panel, Some(cfg_h), false, None, false, border, ent.clone())
             },
         )
         .track_scroll(scroll_handle)
@@ -288,30 +359,63 @@ where
     // графиков — каждый по cfg_h (хвост пустой), много — сжимаются до window/count. FIT: flex без cap.
     let mut tiles: Vec<AnyElement> = Vec::with_capacity(count);
     for ix in 0..count {
-        let (size, flex) = if compress {
-            (Some(cfg_h), true)
-        } else {
-            (None, true)
+        // Размер слота вдоль оси. В режиме метлы:
+        //  • Anchor берёт СВОЮ ширину: compress → flex+max(cfg); stretch(0) → flex (растёт).
+        //  • Follower: stretch(0) → flex+max(стакан) (узкий, ужимается соразмерно — поведение при 0);
+        //              compress → flex без cap (делит остаток окна между стаканами).
+        //  • Normal — как обычно (compress → max cfg, иначе flex).
+        // (size=max_w, flex, min_w). Метла:
+        //  • Follower при width=0(stretch) → flex+max(стакан): ВСЕ стаканы равномерны, ужимаются.
+        //  • Follower при width>0(compress) → flex без cap: делят остаток окна между собой.
+        //  • Anchor при stretch → flex+min(1.5 стакана): остаётся больше, не схлопывается.
+        //  • Anchor при compress → flex+max(cfg): берёт свою (заданную) ширину.
+        //  • Normal — обычный (compress → max cfg, иначе flex).
+        let (size, flex, min_w) = match role(s, ix) {
+            // FIT width=0 (stretch): соседи равномерны (flex+max стакан), якорь больше (flex+min).
+            CompareRole::Follower if !compress => (Some(COMPARE_BOOK_W), true, None),
+            CompareRole::Anchor if !compress => (None, true, Some(COMPARE_ANCHOR_MIN_W)),
+            // FIT width>0 (compress): якорь — ФИКС. заданная ширина px (без сжатия), соседи делят
+            // остаток окна постоянно (flex без cap).
+            CompareRole::Anchor => (Some(cfg_h), false, None),
+            CompareRole::Follower => (None, true, None),
+            // Обычный (не метла): COMPRESS → flex+max(cfg); FIT-stretch → flex.
+            CompareRole::Normal => {
+                if compress {
+                    (Some(cfg_h), true, None)
+                } else {
+                    (None, true, None)
+                }
+            }
         };
         match panel_at(s, ix) {
-            Some(panel) => {
-                tiles.push(tile(s, ix, panel, size, flex, horizontal, border, entity.clone()))
-            }
+            Some(panel) => tiles.push(tile(
+                s,
+                ix,
+                panel,
+                size,
+                flex,
+                min_w,
+                horizontal,
+                border,
+                entity.clone(),
+            )),
             None => {
                 // Пустой (держащийся) слот COMPRESS — прозрачная плашка тех же размеров (по оси).
                 let mut e = div().relative().overflow_hidden();
                 e = if horizontal { e.h_full() } else { e.w_full() };
                 if flex {
                     e = e.flex_1();
-                    e = if horizontal { e.min_w(px(0.0)) } else { e.min_h(px(0.0)) };
+                    let m = min_w.unwrap_or(0.0);
+                    e = if horizontal { e.min_w(px(m)) } else { e.min_h(px(m)) };
                     if let Some(v) = size {
                         e = if horizontal { e.max_w(px(v)) } else { e.max_h(px(v)) };
                     }
                 } else if let Some(v) = size {
+                    // Фикс. БЕЗ сжатия (min=max=v) — иначе в SCROLL flex ужмёт и не будет переполнения.
                     e = if horizontal {
-                        e.w(px(v)).min_w(px(0.0))
+                        e.w(px(v)).min_w(px(v))
                     } else {
-                        e.h(px(v)).min_h(px(0.0))
+                        e.h(px(v)).min_h(px(v))
                     };
                 }
                 tiles.push(e.into_any_element());

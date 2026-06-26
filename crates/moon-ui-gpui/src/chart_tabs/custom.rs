@@ -172,27 +172,42 @@ impl ChartTabs {
         let bk = bucket.clone();
         cx.observe(stack, move |this, _stack, cx| {
             this.sync_custom_coins(num, &bk, cx);
+            // Якорь сравнения мог смениться (клик замка) → обновить торговый таргет группы
+            // (хоткеи/cancel_buy идут на залоченный якорь как на Main-фулскрин).
+            this.sync_main_chart_target(cx);
         })
         .detach();
     }
 
-    /// Сверить текущий список тикеров кастомной вкладки с сохранённым; переписать спек ТОЛЬКО при
-    /// изменении (иначе observe-колбэк на каждый тик данных писал бы вхолостую).
+    /// Сверить текущий состав кастомной вкладки (тикеры + якорь сравнения + режим метлы) с
+    /// сохранённым; переписать спек ТОЛЬКО при изменении (иначе observe-колбэк на каждый тик
+    /// данных писал бы вхолостую).
     fn sync_custom_coins(&mut self, num: u32, bucket: &ChartBucket, cx: &mut Context<Self>) {
         let Some(stack) = self.add_stack(num, bucket) else {
             return;
         };
-        let coins = stack.read(cx).coins(cx);
+        let (coins, anchor, broom) = {
+            let s = stack.read(cx);
+            (s.coins(cx), s.compare_anchor(), s.compare_orderbook_only())
+        };
         let changed = {
             let specs = &self.backend.read(cx).chart_specs;
             specs
                 .iter()
                 .find(|s| s.group == self.group && s.num == num && s.bucket() == *bucket)
-                .map_or(true, |s| s.custom_coins.as_deref() != Some(coins.as_slice()))
+                .map_or(true, |s| {
+                    s.custom_coins.as_deref() != Some(coins.as_slice())
+                        || s.compare_anchor != anchor
+                        || s.compare_orderbook_only != broom
+                })
         };
         if changed {
             let label = self.custom_label(num);
             self.persist_custom(cx, num, bucket, &coins, &label);
+            self.upsert_spec(cx, num, bucket, move |s| {
+                s.compare_anchor = anchor;
+                s.compare_orderbook_only = broom;
+            });
         }
     }
 
@@ -222,6 +237,8 @@ impl ChartTabs {
             Option<bool>,
             Option<bool>,
             Option<bool>,
+            Option<(CoreId, String)>,
+            bool,
         )> = {
             let all = &self.backend.read(cx).chart_specs;
             all.iter()
@@ -239,12 +256,16 @@ impl ChartTabs {
                             s.orderbook_enabled,
                             s.show_zone,
                             s.auto_pin,
+                            s.compare_anchor.clone(),
+                            s.compare_orderbook_only,
                         )
                     })
                 })
                 .collect()
         };
-        for (num, bucket, coins, label, scale, layout, orientation, ob, sz, ap) in specs {
+        for (num, bucket, coins, label, scale, layout, orientation, ob, sz, ap, anchor, broom) in
+            specs
+        {
             let stack = cx.new(|_| {
                 AddChartStack::new(
                     self.backend.clone(),
@@ -274,6 +295,10 @@ impl ChartTabs {
                 }
                 s.pin_all(c);
             });
+            // Восстановить режим сравнения (якорь + метла) после заливки тикеров.
+            if anchor.is_some() || broom {
+                stack.update(cx, |s, c| s.restore_compare(anchor.clone(), broom, c));
+            }
             self.watch_custom_stack(num, &bucket, &stack, cx);
             self.custom.push((num, bucket, stack));
             if let Some(label) = label {
