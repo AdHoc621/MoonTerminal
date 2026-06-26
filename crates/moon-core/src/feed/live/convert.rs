@@ -61,11 +61,26 @@ pub(super) fn license_state_from_proto(
 
 /// Плоская проекция moonproto `ClientSettings` → терминальный снимок. Raw-поля
 /// (`s_price`/`sb_num`/…) в проде `pub(crate)`, поэтому читаем ТОЛЬКО через хелперы.
+/// «Свой» TP кнопки (из `x_sell`/scalp), ИГНОРИРУЯ `fixed_sell_mode` — это ветка
+/// `effective_take_profit_percent` без fixed-sell, чтобы выбор S-слота не подменял отображаемый TP.
+fn main_take_profit_percent(c: &moonproto::ClientSettingsCommand) -> f64 {
+    if c.x_sell > 0 {
+        let mut value = f64::from(c.x_sell);
+        if c.x_tmode {
+            value *= 10.0;
+        }
+        value.min(900.0)
+    } else {
+        f64::from(c.x_sell_scalp) / 50.0
+    }
+}
+
 pub(super) fn client_settings_from_proto(c: &moonproto::ClientSettingsCommand) -> ClientSettings {
     let fixed_sell_pcts =
         std::array::from_fn(|i| c.fixed_sell_preset_percent(i + 1).unwrap_or(0.0));
     ClientSettings {
         take_profit_pct: c.effective_take_profit_percent(),
+        take_profit_main_pct: main_take_profit_percent(c),
         take_profit_extended: c.x_tmode,
         fixed_sell_mode: c.fixed_sell_mode,
         stop_loss_pct: c.price_drop_level,
@@ -147,6 +162,10 @@ pub(super) fn apply_client_settings_edit(
             // становится равным значению S-кнопки.
             s.fixed_sell_mode = true;
             s.set_selected_fixed_sell_slot(slot);
+        }
+        ClientSettingsEdit::EngageMainTakeProfit => {
+            // Возврат к главному TP: гасим fixed-sell, значение TP (x_sell/scalp) не трогаем.
+            s.fixed_sell_mode = false;
         }
         ClientSettingsEdit::SetFixedSellPct { slot, pct } => {
             // Видимый процент = s_price · (x_tmode? 10 : 1); пишем s_price обратным пересчётом.

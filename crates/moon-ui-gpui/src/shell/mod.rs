@@ -659,7 +659,7 @@ impl Shell {
     }
 
     /// Обработка хоткея корня окна: F1-F6 = выбрать пресет размера активного ядра; S1-S6 =
-    /// выбрать fixed-sell слот (меняет TP); cancel_buy — отмена покупок Main. Гасит событие,
+    /// задействовать fixed-sell слот (гасит TP); cancel_buy — отмена покупок Main. Гасит событие,
     /// если хоткей совпал.
     fn on_hotkey(&mut self, ev: &KeyDownEvent, cx: &mut Context<Self>) {
         let group = self.group.clone();
@@ -677,7 +677,7 @@ impl Shell {
                 (size_ix, sell_ix, pressed(&cfg.hotkeys.cancel_buy))
             };
             // Фаза 2 (мутация): F1-F6 = выбрать пресет размера активного ядра; S1-S6 =
-            // выбрать fixed-sell слот (меняет TP); cancel_buy — отмена покупок Main.
+            // задействовать fixed-sell слот (гасит TP); cancel_buy — отмена покупок Main.
             if let Some(i) = size_ix {
                 match b.active_trade_core(&group) {
                     Some(core) => {

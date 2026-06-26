@@ -22,6 +22,10 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // Клик по TP возвращает управление главному TP (гасит активный S-слот), не меняя значение TP.
+        if metric == controls::TradeMetric::Tp {
+            self.commit_client_edit(ClientSettingsEdit::EngageMainTakeProfit, cx);
+        }
         if self.open_metric_popup == Some(metric) {
             self.open_metric_popup = None;
         } else {
@@ -63,11 +67,15 @@ impl Shell {
         use controls::TradeMetric;
         let pad = f32::from(design::ui_px(cx, 12.0));
         let gap = f32::from(design::ui_px(cx, 6.0));
+        // Полоса S-слотов (6 × 62) теперь стоит между TP и SL + разделитель (1px), поэтому
+        // SL/Lev сдвинуты вправо: TP→sell→divider→SL = 3 зазора.
+        const SELL_STRIP_W: f32 = 6.0 * 44.0;
+        let sl_off = 74.6 + SELL_STRIP_W + 1.0 + 3.0 * gap;
         let left = pad
             + match metric {
                 TradeMetric::Tp => 0.0,
-                TradeMetric::Sl => 74.6 + gap,
-                TradeMetric::Lev => 74.6 + gap + 74.6 + gap,
+                TradeMetric::Sl => sl_off,
+                TradeMetric::Lev => sl_off + 74.6 + gap,
             };
         let header_h = f32::from(design::fit_h_px(cx, design::HEADER_TOP_H, 14.0, 9.0));
         let toolbar_h = f32::from(design::fit_h_px(cx, controls::TOOLBAR_H, 13.0, 9.5));

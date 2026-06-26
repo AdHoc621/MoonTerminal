@@ -411,8 +411,12 @@ pub struct LicenseState {
 /// в проде `pub(crate)`, поэтому читаем их ТОЛЬКО через публичные хелперы команды.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ClientSettings {
-    /// Эффективный тейк-профит, % (`effective_take_profit_percent`).
+    /// Эффективный тейк-профит, % (`effective_take_profit_percent`). При `fixed_sell_mode`
+    /// равен проценту выбранного S-слота — НЕ показываем его на кнопке TP (см. `take_profit_main_pct`).
     pub take_profit_pct: f64,
+    /// «Свой» тейк-профит кнопки TP (из `x_sell`/scalp), НЕ зависит от `fixed_sell_mode` —
+    /// кнопка TP всегда показывает его, чтобы выбор S-слота не подменял отображаемый TP.
+    pub take_profit_main_pct: f64,
     /// Расширенный диапазон TP (флаг `x_tmode`, «s9»): off = 0..100%, on = 100..900%
     /// (на проводе хранится как `x_sell` ×10). Определяет диапазон слайдера и галку в попапе.
     pub take_profit_extended: bool,
@@ -475,8 +479,11 @@ pub enum ClientSettingsEdit {
     /// Скальп-тейк (суб-процентный TP через `x_sell_scalp`, x_sell=0): файн-слайдер TP.
     /// На ядре шаг реально 1/50 = 0.02%. Снимает fixed-sell.
     ScalpTakeProfit(f64),
-    /// Выбрать fixed-sell слот 1..=6 (клик по S1-S6).
+    /// Выбрать fixed-sell слот 1..=6 (клик по S1-S6). Включает `fixed_sell_mode`.
     SelectFixedSellSlot(usize),
+    /// Вернуть управление главному TP: `fixed_sell_mode=false`, БЕЗ изменения значения TP
+    /// (`x_sell`/scalp не трогаем). Клик по кнопке TP / повторный клик по активному S-слоту.
+    EngageMainTakeProfit,
     /// Значение fixed-sell пресета: слот 1..=6, видимый процент (колесо/инлайн-правка S-кнопки).
     SetFixedSellPct { slot: usize, pct: f64 },
 }

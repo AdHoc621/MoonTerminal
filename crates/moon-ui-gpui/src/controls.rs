@@ -88,7 +88,8 @@ impl TradeMetric {
             TradeMetric::Tp => cd
                 .client_settings
                 .as_ref()
-                .map(|s| s.take_profit_pct as f32),
+                // «Свой» TP кнопки (не эффективный): выбор S-слота не должен подменять seed слайдера.
+                .map(|s| s.take_profit_main_pct as f32),
             TradeMetric::Sl => cd.client_settings.as_ref().map(|s| s.stop_loss_pct),
             TradeMetric::Lev => {
                 // Плечо монеты main-чарта из per-core карты (любой отслеживаемый рынок, не
@@ -121,18 +122,22 @@ fn metric_button(
     color: u32,
     width: f32,
     open: bool,
+    engaged: bool,
     shell: Entity<Shell>,
     p: MoonPalette,
 ) -> impl IntoElement {
+    // «Горит» = попап открыт ИЛИ метрика задействована (для TP — fixed_sell выключен). Так TP
+    // и S-слоты дают взаимоисключающую подсветку: либо горит TP, либо один S-слот.
+    let lit = open || engaged;
     MoonButton::new(metric.id())
         .width(width)
-        .variant(if open {
+        .variant(if lit {
             MoonButtonVariant::Blue
         } else {
             MoonButtonVariant::Neutral
         })
         .size(MoonButtonSize::Toolbar)
-        .selected(open)
+        .selected(lit)
         .segment(
             MoonButtonSegment::new(metric.label())
                 .color(p.text_muted)
@@ -213,7 +218,7 @@ pub fn metric_popup_content(
                         .store()
                         .core(core)
                         .and_then(|d| d.client_settings.as_ref())
-                        .map(|s| s.take_profit_pct)
+                        .map(|s| s.take_profit_main_pct)
                         .unwrap_or(0.0);
                     if let Err(error) = b.session.edit_client_settings(
                         core,
@@ -417,12 +422,13 @@ fn size_strip(
     )
 }
 
-/// Ширины кнопок продажи — единая 62 на все слоты.
-const SELL_W: [f32; 6] = [62.0, 62.0, 62.0, 62.0, 62.0, 62.0];
+/// Ширины кнопок продажи — единая 44.0 на все слоты (на 30% уже базовых 62).
+const SELL_W: [f32; 6] = [44.0, 44.0, 44.0, 44.0, 44.0, 44.0];
 
-/// Полоса fixed-sell пресетов (S1-S6). Значения — из `ClientSettings` активного ядра
-/// (видимые проценты), выбранный пресет подсвечен (`fixed_sell_slot`). Нет ядра/настроек —
-/// прочерки. Запись (смена пресета) — Этап 4: пока клик логируется.
+/// Полоса fixed-sell пресетов (S1-S6) рядом с кнопкой TP (без подписи). Значения — из
+/// `ClientSettings` активного ядра (видимые проценты). Слот подсвечен ТОЛЬКО когда задействован
+/// (`sel_slot = Some` лишь при `fixed_sell_mode`); по умолчанию все S погашены, горит TP.
+/// Клик — задействовать слот (гасит TP); повторный клик по активному — вернуть TP. Нет ядра — прочерки.
 fn sell_strip(
     pcts: Option<[f64; 6]>,
     sel_slot: Option<usize>,
@@ -458,17 +464,23 @@ fn sell_strip(
         "toolbar-sell-edit",
         input,
         core.is_some(),
-        // Одиночный клик = выбрать слот (меняет TP); дабл = инлайн-правка %.
+        // Одиночный клик = задействовать слот (гасит TP); повторный клик по активному слоту
+        // = вернуть TP (гасит S, не трогая значение TP); дабл = инлайн-правка %.
         move |i, dbl, cx| {
             let Some(core) = core else { return };
             backend_click.update(cx, |b, bcx| {
                 if dbl {
                     b.sell_edit_req = Some((core, i));
-                } else if let Err(error) = b
-                    .session
-                    .edit_client_settings(core, ClientSettingsEdit::SelectFixedSellSlot(i + 1))
-                {
-                    log::warn!("select fixed-sell slot failed: {error}");
+                } else {
+                    // Повторный клик по уже горящему слоту → возврат к главному TP.
+                    let edit = if sel_slot == Some(i + 1) {
+                        ClientSettingsEdit::EngageMainTakeProfit
+                    } else {
+                        ClientSettingsEdit::SelectFixedSellSlot(i + 1)
+                    };
+                    if let Err(error) = b.session.edit_client_settings(core, edit) {
+                        log::warn!("toggle fixed-sell slot failed: {error}");
+                    }
                 }
                 bcx.notify();
             });
@@ -678,7 +690,18 @@ pub fn toolbar(
     open_metric: Option<TradeMetric>,
     cx: &App,
 ) -> impl IntoElement {
-    let (follow, focus_core, size_values, size_sel, tp_str, sl_str, lev_str, sell_pcts, sell_slot) = {
+    let (
+        follow,
+        focus_core,
+        size_values,
+        size_sel,
+        tp_str,
+        tp_engaged,
+        sl_str,
+        lev_str,
+        sell_pcts,
+        sell_slot,
+    ) = {
         let b = backend.read(cx);
         // Активное торговое ядро = выбор в селекторе шапки (sticky-override) ИЛИ ядро
         // открытого фуллскрином Main-чарта. Все торговые контролы (размеры/TP/SL/Lev/sell)
@@ -693,9 +716,13 @@ pub fn toolbar(
         };
         let core_data = focus_core.and_then(|c| b.session.store().core(c));
         let cs = core_data.and_then(|d| d.client_settings.as_ref());
+        // Кнопка TP всегда показывает СВОЙ TP (`take_profit_main_pct`), даже когда задействован
+        // S-слот — выбор слота не подменяет отображаемое значение TP.
         let tp_str = cs
-            .map(|s| format!("{}%", fmt_field2(s.take_profit_pct as f32)))
+            .map(|s| format!("{}%", fmt_field2(s.take_profit_main_pct as f32)))
             .unwrap_or_else(|| "—".to_string());
+        // TP «горит», когда fixed-sell выключен (нет ядра → по умолчанию горит TP).
+        let tp_engaged = cs.map(|s| !s.fixed_sell_mode).unwrap_or(true);
         // SL знаковый: «+1,00%» / «-20,00%» (а не «--» из ручного минуса перед отрицательным).
         let sl_str = cs
             .map(|s| format!("{}%", fmt_field2_signed(s.stop_loss_pct)))
@@ -706,7 +733,8 @@ pub fn toolbar(
                 std::array::from_fn(|i| b.fixed_sell_pct_with(core, i, s.fixed_sell_pcts[i]));
             arr
         });
-        let sell_slot = cs.map(|s| s.fixed_sell_slot);
+        // S-слот подсвечен ТОЛЬКО когда fixed-sell включён (иначе по умолчанию все S погашены).
+        let sell_slot = cs.filter(|s| s.fixed_sell_mode).map(|s| s.fixed_sell_slot);
         // Lev = плечо монеты main-чарта на активном ядре (per-core, per-coin) из ассетов.
         let lev_str = TradeMetric::Lev
             .current(b, group)
@@ -719,6 +747,7 @@ pub fn toolbar(
             size_values,
             size_sel,
             tp_str,
+            tp_engaged,
             sl_str,
             lev_str,
             sell_pcts,
@@ -739,21 +768,37 @@ pub fn toolbar(
         .border_color(rgb(p.border));
 
     row = row
+        // TP + полоса S-слотов рядом (без подписи «sell»): это один и тот же sell-таргет, горит
+        // что-то одно — либо TP, либо выбранный S-слот.
         .child(metric_button(
             TradeMetric::Tp,
             tp_str,
             p.blue,
             74.6,
             open_metric == Some(TradeMetric::Tp),
+            tp_engaged,
             shell.clone(),
             p,
         ))
+        .child(sell_strip(
+            sell_pcts,
+            sell_slot,
+            // Редактируем S-инпутом только если запрос относится к ФОКУСНОМУ ядру тулбара.
+            sell_edit
+                .filter(|(c, _)| Some(*c) == focus_core)
+                .map(|(_, i)| i),
+            sell_input,
+            backend.clone(),
+            focus_core,
+        ))
+        .child(divider(p))
         .child(metric_button(
             TradeMetric::Sl,
             sl_str,
             p.red,
             74.6,
             open_metric == Some(TradeMetric::Sl),
+            false,
             shell.clone(),
             p,
         ))
@@ -763,6 +808,7 @@ pub fn toolbar(
             p.text,
             61.6,
             open_metric == Some(TradeMetric::Lev),
+            false,
             shell.clone(),
             p,
         ))
@@ -776,19 +822,6 @@ pub fn toolbar(
                 .filter(|(c, _)| Some(*c) == focus_core)
                 .map(|(_, i)| i),
             size_input,
-            backend.clone(),
-            focus_core,
-        ))
-        .child(divider(p))
-        .child(strip_label("sell", p, cx))
-        .child(sell_strip(
-            sell_pcts,
-            sell_slot,
-            // Редактируем S-инпутом только если запрос относится к ФОКУСНОМУ ядру тулбара.
-            sell_edit
-                .filter(|(c, _)| Some(*c) == focus_core)
-                .map(|(_, i)| i),
-            sell_input,
             backend.clone(),
             focus_core,
         ))
