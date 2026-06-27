@@ -358,6 +358,12 @@ impl ChartDataState {
                         &mut markers,
                     );
                     pr.layers.set_userdata(&zones, &hlines, &segs, &markers);
+                    build_order_labels(
+                        &mut pr.order_labels,
+                        &core_st.order_lines,
+                        &pane.market,
+                        &self.orders,
+                    );
                     pr.last_order_lines_rev = core_st.order_lines_rev;
                     pr.last_order_lines_sync_ms = now;
                     pr.pending_order_gpu_rev = Some(core_st.order_lines_rev);
@@ -368,6 +374,7 @@ impl ChartDataState {
                 }
             } else if force || pr.last_order_lines_rev != u64::MAX {
                 pr.layers.set_userdata(&[], &[], &[], &[]);
+                pr.order_labels.clear();
                 pr.last_order_lines_rev = u64::MAX;
                 pr.last_order_lines_sync_ms = now;
                 pr.pending_order_gpu_rev = Some(u64::MAX);
@@ -844,6 +851,7 @@ impl ChartDataState {
                     pr.gpu_prepare_dirty = true;
                     pixels_changed = true;
                 }
+                pr.orderbook_levels.clear();
             } else {
                 source.with_orderbook_view(pane.core, &pane.market, |data| {
                     if let Some((book, book_rev)) = data {
@@ -861,6 +869,9 @@ impl ChartDataState {
                             book.build_instances(lo, hi, &mut levels);
                             diag_levels_len = Some(levels.len());
                             pr.layers.set_orderbook(levels);
+                            // CPU-копия (price, cum) видимых уровней — для подписи накопленного
+                            // количества в стакане под курсором (GPU-инстансы объём не несут).
+                            book.collect_visible_cum(lo, hi, &mut pr.orderbook_levels);
                             pr.last_book_rev = book_rev;
                             pr.last_book_lo = lo;
                             pr.last_book_hi = hi;
@@ -889,6 +900,7 @@ impl ChartDataState {
                         }
                     } else if pr.last_book_rev != u64::MAX {
                         pr.layers.set_orderbook(Vec::new());
+                        pr.orderbook_levels.clear();
                         pr.last_book_rev = u64::MAX;
                         pr.last_book_lo = f32::NAN;
                         pr.last_book_hi = f32::NAN;
@@ -931,4 +943,95 @@ impl ChartDataState {
             prepared_sig.unwrap_or_else(|| self.source_market_signature(source));
         self.view_dirty = false;
     }
+}
+
+/// Подписи ордерных линий рынка для слоя текста: размер у buy-линии, % от входа +
+/// количество купленного у sell-линии, % стопа у stop-линии. Сторона размещения
+/// (над/под линией) зависит от long/short — как в эталоне MoonBot (категория E).
+/// Только открытые ордера (закрытые/исполненные не подписываем).
+fn build_order_labels(
+    out: &mut Vec<OrderLabel>,
+    store: &moon_core::session::order_lines::OrderLineStore,
+    market: &str,
+    style: &OrdersStyle,
+) {
+    out.clear();
+    for o in store.iter_market(market) {
+        if o.closed_ms.is_some() {
+            continue;
+        }
+        let buy = o.lines[LineKind::Buy as usize].current_price();
+        let sell = o.lines[LineKind::Sell as usize].current_price();
+        let stop = o.lines[LineKind::Stop as usize].current_price();
+        let short = o.is_short;
+        // BUY: размер ордера. Лонг → над линией, шорт → под.
+        if let Some(bp) = buy {
+            if o.size > 0.0 && bp > 0.0 {
+                out.push(OrderLabel {
+                    price: bp,
+                    text: fmt_amount(o.size),
+                    above: !short,
+                    color: rgb_u32(style.buy.color),
+                });
+            }
+        }
+        // SELL: % от цены покупки (сверху у шорта) + количество купленного (снизу у шорта).
+        // Проценты красим знаково: плюс → зелёный, минус → красный.
+        if let Some(sp) = sell {
+            if let Some(bp) = buy {
+                if bp > 0.0 {
+                    let pct = (sp - bp) / bp * 100.0;
+                    out.push(OrderLabel {
+                        price: sp,
+                        text: fmt_pct(pct),
+                        above: short,
+                        color: pct_color(pct),
+                    });
+                }
+            }
+            let bought = o.size * (o.fill_pct / 100.0).clamp(0.0, 1.0);
+            if bought > 0.0 {
+                out.push(OrderLabel {
+                    price: sp,
+                    text: fmt_amount(bought),
+                    above: !short,
+                    color: rgb_u32(style.sell.color),
+                });
+            }
+        }
+        // STOP: % стопа от цены покупки. Шорт → сверху, лонг → снизу. Знаковый цвет.
+        if let (Some(stp), Some(bp)) = (stop, buy) {
+            if bp > 0.0 {
+                let pct = (stp - bp) / bp * 100.0;
+                out.push(OrderLabel {
+                    price: stp,
+                    text: fmt_pct(pct),
+                    above: short,
+                    color: pct_color(pct),
+                });
+            }
+        }
+    }
+}
+
+fn rgb_u32(c: [u8; 3]) -> u32 {
+    ((c[0] as u32) << 16) | ((c[1] as u32) << 8) | c[2] as u32
+}
+
+/// Цвет знакового процента: плюс → зелёный, минус → красный (палитра ядра).
+fn pct_color(v: f32) -> u32 {
+    if v >= 0.0 {
+        rgb_u32(moon_core::palette::GREEN)
+    } else {
+        rgb_u32(moon_core::palette::RED)
+    }
+}
+
+/// Компактное число (база/штуки) с SI-суффиксом K/M/B/T.
+fn fmt_amount(v: f32) -> String {
+    moon_core::util::fmt::compact_si(v as f64)
+}
+
+fn fmt_pct(v: f32) -> String {
+    format!("{v:+.2}%")
 }

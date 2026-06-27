@@ -111,6 +111,18 @@ impl OrderBookModel {
         }
     }
 
+    /// Видимые в окне `[lo, hi]` уровни как `(price, cum)` — КУМУЛЯТИВНЫЙ объём от спреда до
+    /// уровня (глубина), а не индивидуальный объём точки. Для CPU-подписи количества в стакане
+    /// под курсором: GPU-инстансы объём не несут, а `raw` приватен — копию снимает этот метод.
+    pub fn collect_visible_cum(&self, lo: f32, hi: f32, out: &mut Vec<(f32, f32)>) {
+        out.clear();
+        for r in &self.raw {
+            if level_overlaps(r, lo, hi) {
+                out.push((r.price, r.cum));
+            }
+        }
+    }
+
     /// Число уровней книги (для отладочного счётчика).
     pub fn len(&self) -> usize {
         self.raw.len()

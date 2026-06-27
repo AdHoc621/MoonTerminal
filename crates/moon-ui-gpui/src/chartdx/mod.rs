@@ -137,6 +137,20 @@ struct CursorState {
     local: [f32; 2],
 }
 
+/// Готовая подпись у ордерной линии (категория E референса): текст + цена линии (Y) +
+/// сторона размещения (над/под линией) + цвет линии. Собирается при синке ордеров
+/// (`sync_orders_from_session`, там под рукой `session`), рисуется в `prepare_text`.
+#[derive(Clone)]
+pub(super) struct OrderLabel {
+    /// Цена линии — превращается в Y по `view` каждый кадр.
+    pub price: f32,
+    pub text: String,
+    /// true → подпись над линией, false → под линией.
+    pub above: bool,
+    /// Цвет линии (0xRRGGBB) — подпись красится в него же.
+    pub color: u32,
+}
+
 /// GPU-состояние одной панели для `gpu_canvas` callbacks — отделено от логики `Container`,
 /// синхронизируется по индексу + идентичности (core, market) в `prepare`.
 struct PaneRender {
@@ -195,6 +209,12 @@ struct PaneRender {
     last_order_highlight_uid: Option<u64>,
     /// Последний preview drag, который был зашит в userdata.
     last_order_drag_preview: Option<(u64, LineKind, u32)>,
+    /// Готовые подписи ордерных линий (size/%/qty), пересобираются при изменении ордеров.
+    /// Рисуются в `prepare_text`, привязка к Y — по `view` каждый кадр.
+    order_labels: Vec<OrderLabel>,
+    /// Видимые уровни стакана `(price, qty)` — CPU-копия для подписи количества под курсором.
+    /// Наполняется при заливке стакана (`prepare`), пусто если стакан выключен.
+    orderbook_levels: Vec<(f32, f32)>,
     /// Камера X для own-pass: эпоха времени, поле справа (доля «будущего»), флаг follow и
     /// последняя КВАНТОВАННАЯ пиксель-позиция правого края. Callback двигает камеру по этим
     /// полям на каждый present (vblank, целопиксельно) — живой скролл без отдельного таймера.
@@ -268,6 +288,8 @@ impl PaneRender {
             last_order_present_ms: 0.0,
             last_order_highlight_uid: None,
             last_order_drag_preview: None,
+            order_labels: Vec::new(),
+            orderbook_levels: Vec::new(),
             epoch_ms: 0.0,
             right_margin_frac: 0.10,
             follow: false,

@@ -160,6 +160,10 @@ pub struct RetainedOrder {
     pub uid: u64,
     pub market: String,
     pub is_short: bool,
+    /// Размер входной ноги ордера (в базовой валюте) — для подписи размера у buy-линии.
+    pub size: f32,
+    /// Заполнение входной ноги, % (0..100) — для подписи «куплено» (qty = size·fill/100).
+    pub fill_pct: f32,
     pub pending: bool,
     pub panic_sell: bool,
     pub is_moon_shot: bool,
@@ -195,6 +199,8 @@ impl RetainedOrder {
             uid: r.uid,
             market: r.market.clone(),
             is_short: r.is_short,
+            size: r.size as f32,
+            fill_pct: r.fill_pct,
             pending: r.pending,
             panic_sell: r.panic_sell,
             is_moon_shot: r.is_moon_shot,
@@ -265,6 +271,17 @@ impl OrderLineStore {
             }
             order.is_short = r.is_short;
             order.pending = r.pending;
+            // Размер/заполнение — для подписей линий. Бампим rev при заметном изменении
+            // (fill ползёт по мере исполнения → подпись «куплено» должна обновляться),
+            // с порогом против float-дрожания.
+            let new_size = r.size as f32;
+            if (order.size - new_size).abs() > price_eps(new_size)
+                || (order.fill_pct - r.fill_pct).abs() > 0.01
+            {
+                order.size = new_size;
+                order.fill_pct = r.fill_pct;
+                changed = true;
+            }
             if order.panic_sell != r.panic_sell
                 || order.is_moon_shot != r.is_moon_shot
                 || order.corridor_price_down != r.corridor_price_down

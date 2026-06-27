@@ -68,6 +68,30 @@ fn rect_y_range_log(dst: [f32; 4], scale: f32) -> (f32, f32) {
     (t, t + dst[3] / scale)
 }
 
+/// «+1.25%» — знаковый процент для подписей курсора (отклонение от текущей цены).
+fn fmt_pct(v: f32) -> String {
+    format!("{v:+.2}%")
+}
+
+/// Компактное накопленное количество стакана с SI-суффиксом K/M/B/T — для подписи курсора.
+fn fmt_amount(v: f32) -> String {
+    moon_core::util::fmt::compact_si(v as f64)
+}
+
+fn rgb3(c: [u8; 3]) -> u32 {
+    ((c[0] as u32) << 16) | ((c[1] as u32) << 8) | c[2] as u32
+}
+
+/// Цвет знакового процента: плюс → зелёный, минус → красный (палитра ядра).
+fn pct_hsla(v: f32) -> Hsla {
+    let c = if v >= 0.0 {
+        moon_core::palette::GREEN
+    } else {
+        moon_core::palette::RED
+    };
+    color(rgb3(c))
+}
+
 fn clamp_anchor(value: f32, min: f32, max: f32) -> f32 {
     if min <= max {
         value.clamp(min, max)
@@ -252,6 +276,11 @@ impl RenderState {
             if !active {
                 continue;
             }
+            // Снимаем подписи ордеров / уровни стакана / last в локали ДО первого `draw_text`
+            // (он берёт `&mut self`, поэтому держать заём `self.panes[idx]` нельзя).
+            let order_labels = self.panes[idx].order_labels.clone();
+            let orderbook_levels = self.panes[idx].orderbook_levels.clone();
+            let cached_last_price = self.panes[idx].cached_last_price;
             let pane_left = pane_bounds[0] / sf;
             let pane_right = (pane_bounds[0] + pane_bounds[2]) / sf;
             let pane_bottom = (pane_bounds[1] + pane_bounds[3]) / sf;
@@ -321,6 +350,17 @@ impl RenderState {
             let window_ms = plot_w as f64 / time_to_px as f64;
             let left_unix = epoch_ms + view.view_time0 as f64;
 
+            // Левый край стакана / раздельной зоны (справа) — к нему прижаты (правым краем)
+            // подписи ордерных линий и курсора. Стакан вкл → плот кончается у стакана →
+            // его правый край = левый край стакана. Стакан выкл → левый край зоны управления.
+            let zone_left = if orderbook_enabled {
+                plot_right
+            } else {
+                let zone_w = moon_chart::GLASS_ZONE_PX.min((pane_right - pane_left) * 0.5);
+                pane_right - zone_w
+            };
+            let label_x = zone_left - READOUT_PAD_X;
+
             let cursor = self.cursor.filter(|cursor| cursor.pane == idx);
             let mut skip_time_label_x = None;
             let mut skip_price_label_y = None;
@@ -370,6 +410,64 @@ impl RenderState {
                     self.draw_text(ctx, &label, x, cy_log, 1.0, 0.5, readout)?;
                     skip_price_label_y = Some(rect_y_range_log(dst, sf));
                 }
+
+                // Подписи у крестовины, прижатые к левому краю зоны стакана (справа):
+                // сверху — количество в стакане на уровне курсора (только при включённом
+                // стакане), снизу — % отклонения курсора от текущей цены.
+                if cy_log >= plot_top && cy_log <= plot_bottom {
+                    let cursor_price = y_min + (plot_bottom - cy_log) / price_to_px.max(1e-6);
+                    if let Some(last) = cached_last_price {
+                        if last > 0.0 {
+                            let pct = (cursor_price - last) / last * 100.0;
+                            self.draw_text(
+                                ctx,
+                                &fmt_pct(pct),
+                                label_x,
+                                cy_log + 2.0,
+                                1.0,
+                                0.0,
+                                pct_hsla(pct),
+                            )?;
+                        }
+                    }
+                    if orderbook_enabled && !orderbook_levels.is_empty() {
+                        let tol = 6.0 / price_to_px.max(1e-6);
+                        let mut best: Option<(f32, f32)> = None;
+                        for (lp, q) in &orderbook_levels {
+                            let d = (lp - cursor_price).abs();
+                            if d <= tol && best.is_none_or(|(bd, _)| d < bd) {
+                                best = Some((d, *q));
+                            }
+                        }
+                        if let Some((_, q)) = best {
+                            self.draw_text(
+                                ctx,
+                                &fmt_amount(q),
+                                label_x,
+                                cy_log - 2.0,
+                                1.0,
+                                1.0,
+                                readout,
+                            )?;
+                        }
+                    }
+                }
+            }
+
+            // Подписи ордерных линий (size у buy, % + куплено у sell, % стопа): Y по цене линии,
+            // прижато правым краем к левому краю зоны стакана. Сторону (над/под линией) и цвет
+            // задал сборщик в data_state (по long/short, как в эталоне).
+            for label in &order_labels {
+                let y = plot_bottom - (label.price - y_min) * price_to_px;
+                if y < plot_top || y > plot_bottom {
+                    continue;
+                }
+                let (anchor_y, ay) = if label.above {
+                    (y - 2.0, 1.0)
+                } else {
+                    (y + 2.0, 0.0)
+                };
+                self.draw_text(ctx, &label.text, label_x, anchor_y, 1.0, ay, color(label.color))?;
             }
 
             // Прореживание по вертикали: при низком окне «nice»-шаг даёт подписи плотнее строки —
