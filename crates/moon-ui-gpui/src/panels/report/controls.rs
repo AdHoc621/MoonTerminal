@@ -16,27 +16,22 @@ impl ReportPanel {
                 .unwrap_or_else(|| t!("report.filter.all").to_string())
         };
         let view = cx.entity();
-        let cores = self.cores.clone();
-        let mut items = vec![
-            MoonMenuItem::with_key("rc-all", t!("report.filter.all").to_string())
-                .selected(self.sel_core == 0)
-                .on_click({
-                    let view = view.clone();
-                    move |_, _, app| {
-                        view.update(app, |t, c| t.set_core(0, c));
-                    }
-                }),
-        ];
-        for (i, (_u, name)) in cores.into_iter().enumerate() {
-            let view = view.clone();
-            items.push(
-                MoonMenuItem::with_key(format!("rc-{i}"), name)
-                    .selected(self.sel_core == i + 1)
-                    .on_click(move |_, _, app| {
-                        view.update(app, |t, c| t.set_core(i + 1, c));
-                    }),
-            );
+        let mut options: Vec<(usize, SharedString, SharedString)> = vec![(
+            0,
+            "rc-all".into(),
+            t!("report.filter.all").to_string().into(),
+        )];
+        for (i, (_u, name)) in self.cores.iter().enumerate() {
+            options.push((i + 1, format!("rc-{i}").into(), name.clone().into()));
         }
+        let items = crate::panels::radio_items(
+            options,
+            self.sel_core,
+            crate::panels::RadioMark::Highlight,
+            move |app, idx| {
+                view.update(app, |t, c| t.set_core(idx, c));
+            },
+        );
         MoonDropdown::new("rep-core")
             .label(format!("{cur} ▾"))
             .trigger_variant(MoonButtonVariant::Soft)
@@ -56,11 +51,30 @@ impl ReportPanel {
             SideFilter::Short => t!("report.side.short").to_string(),
         };
         let view = cx.entity();
-        let opts = [
-            (SideFilter::All, t!("report.filter.all").to_string()),
-            (SideFilter::Long, t!("report.side.long").to_string()),
-            (SideFilter::Short, t!("report.side.short").to_string()),
-        ];
+        let items = crate::panels::radio_items(
+            [
+                (
+                    SideFilter::All,
+                    "rs-all".into(),
+                    t!("report.filter.all").to_string().into(),
+                ),
+                (
+                    SideFilter::Long,
+                    "rs-long".into(),
+                    t!("report.side.long").to_string().into(),
+                ),
+                (
+                    SideFilter::Short,
+                    "rs-short".into(),
+                    t!("report.side.short").to_string().into(),
+                ),
+            ],
+            self.side,
+            crate::panels::RadioMark::Highlight,
+            move |app, side| {
+                view.update(app, |t, c| t.set_side(side, c));
+            },
+        );
         MoonDropdown::new("rep-side")
             .label(format!("{cur} ▾"))
             .trigger_variant(MoonButtonVariant::Soft)
@@ -68,14 +82,7 @@ impl ReportPanel {
             .trigger_width(86.0)
             .menu_width(120.0)
             .menu_size(MoonMenuSize::Compact)
-            .items(opts.into_iter().map(move |(side, label)| {
-                let view = view.clone();
-                MoonMenuItem::with_key(format!("rs-{label}"), label)
-                    .selected(side == self.side)
-                    .on_click(move |_, _, app| {
-                        view.update(app, |t, c| t.set_side(side, c));
-                    })
-            }))
+            .items(items)
     }
 
     /// Попап выбора видимых колонок (чекбоксы).

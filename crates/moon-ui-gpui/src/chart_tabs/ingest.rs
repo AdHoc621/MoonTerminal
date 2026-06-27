@@ -116,7 +116,7 @@ impl ChartTabs {
                     let specs = &self.backend.read(cx).chart_specs;
                     let spec = specs
                         .iter()
-                        .find(|s| s.group == self.group && s.num == n && s.bucket() == bucket);
+                        .find(|s| s.matches(&self.group, n, &bucket));
                     (
                         spec.and_then(|s| s.scale),
                         spec.map_or((None, None, None), |s| {

@@ -10,6 +10,7 @@
 mod add_stack;
 mod coin_search;
 mod custom;
+mod detached_host;
 mod ingest;
 mod layout_popup;
 mod main_stack;
@@ -589,7 +590,7 @@ fn chart_pane_label(
         let specs = &backend.read(cx).chart_specs;
         if let Some(s) = specs
             .iter()
-            .find(|s| s.group == group && s.num == n && s.bucket() == *bucket)
+            .find(|s| s.matches(group, n, bucket))
         {
             if s.custom_coins.is_some() {
                 return s.custom_label.clone().unwrap_or_else(|| {

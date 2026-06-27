@@ -130,6 +130,32 @@ pub struct ChartTabSpec {
 }
 
 impl ChartTabSpec {
+    /// Заготовка спеки вкладки (group/num/bucket) со всеми опциями в дефолте (None). База для
+    /// `upsert`, чтобы не дублировать длинный литерал со всеми полями в каждом пути персиста.
+    pub fn new(group: String, num: u32, bucket: ChartBucket) -> Self {
+        Self {
+            group,
+            num,
+            core: None,
+            bucket: Some(bucket),
+            scale: None,
+            detached: None,
+            layout_mode: None,
+            layout_height_fit: None,
+            layout_height_scroll: None,
+            orderbook_enabled: None,
+            show_zone: None,
+            auto_pin: None,
+            layout_orientation: None,
+            cancel_buy_pos: None,
+            panic_sell_pos: None,
+            custom_coins: None,
+            custom_label: None,
+            compare_anchor: None,
+            compare_orderbook_only: false,
+        }
+    }
+
     /// Ключ вкладки: новый `bucket`, иначе выводим из legacy `core`
     /// (Some(ядро)→Core, None→Shared).
     pub fn bucket(&self) -> ChartBucket {
@@ -137,6 +163,32 @@ impl ChartTabSpec {
             Some(id) => ChartBucket::Core(id),
             None => ChartBucket::Shared,
         })
+    }
+
+    /// Совпадает ли спек с ключом вкладки (группа + номер + bucket). Один предикат на все
+    /// `chart_specs.iter().find(...)` по тройке ключа.
+    pub fn matches(&self, group: &str, num: u32, bucket: &ChartBucket) -> bool {
+        self.group == group && self.num == num && self.bucket() == *bucket
+    }
+}
+
+/// Найти спеку (group/num/bucket) и применить `f`; если её ещё нет — создать заготовку
+/// (`ChartTabSpec::new`) и применить `f` к ней. Один общий upsert для всех путей персиста
+/// чарт-вкладок (`ChartTabs`/`DetachedChartHost`). Пометку `chart_specs_dirty` ставит
+/// вызывающий (флаг живёт на `Backend`).
+pub fn upsert(
+    specs: &mut Vec<ChartTabSpec>,
+    group: &str,
+    num: u32,
+    bucket: &ChartBucket,
+    f: impl FnOnce(&mut ChartTabSpec),
+) {
+    if let Some(s) = specs.iter_mut().find(|s| s.matches(group, num, bucket)) {
+        f(s);
+    } else {
+        let mut s = ChartTabSpec::new(group.to_string(), num, bucket.clone());
+        f(&mut s);
+        specs.push(s);
     }
 }
 

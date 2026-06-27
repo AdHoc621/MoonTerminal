@@ -19,34 +19,32 @@ impl OrdersPanel {
                 .unwrap_or_else(|| t!("orders.all_cores").to_string()),
         };
         let view = cx.entity();
-        let mut menu = MoonDropdown::new("orders-source")
+        let mut options: Vec<(OrdersSource, SharedString, SharedString)> = vec![(
+            OrdersSource::All,
+            "all".into(),
+            t!("orders.all_cores").to_string().into(),
+        )];
+        for (id, name) in cores {
+            options.push((
+                OrdersSource::Core(*id),
+                format!("core-{id}").into(),
+                name.clone().into(),
+            ));
+        }
+        let items = crate::panels::radio_items(
+            options,
+            self.view.source,
+            crate::panels::RadioMark::Check,
+            move |app, src| Self::mutate(&view, app, |v| v.source = src),
+        );
+        MoonDropdown::new("orders-source")
             .label(format!("{cur} ▾"))
             .trigger_variant(MoonButtonVariant::Soft)
             .trigger_size(MoonButtonSize::Action)
             .trigger_width(118.0)
             .menu_width(160.0)
             .menu_size(MoonMenuSize::Compact)
-            .item(
-                MoonMenuItem::with_key("all", t!("orders.all_cores").to_string())
-                    .checked(matches!(self.view.source, OrdersSource::All))
-                    .on_click({
-                        let view = view.clone();
-                        move |_, _, app| Self::mutate(&view, app, |v| v.source = OrdersSource::All)
-                    }),
-            );
-        for (id, name) in cores {
-            let id = *id;
-            let selected = matches!(self.view.source, OrdersSource::Core(cur) if cur == id);
-            let view = view.clone();
-            menu = menu.item(
-                MoonMenuItem::with_key(format!("core-{id}"), name.clone())
-                    .checked(selected)
-                    .on_click(move |_, _, app| {
-                        Self::mutate(&view, app, |v| v.source = OrdersSource::Core(id))
-                    }),
-            );
-        }
-        menu
+            .items(items)
     }
 
     /// Поле-список типа ордеров (Все / Реальные / Эмуляторные).
@@ -57,26 +55,36 @@ impl OrdersPanel {
             OrderKind::Emu => t!("orders.kind.emu"),
         };
         let view = cx.entity();
-        let mut menu = MoonDropdown::new("orders-kind")
+        let items = crate::panels::radio_items(
+            [
+                (
+                    OrderKind::All,
+                    "kind-all".into(),
+                    t!("orders.kind.all").to_string().into(),
+                ),
+                (
+                    OrderKind::Real,
+                    "kind-real".into(),
+                    t!("orders.kind.real").to_string().into(),
+                ),
+                (
+                    OrderKind::Emu,
+                    "kind-emu".into(),
+                    t!("orders.kind.emu").to_string().into(),
+                ),
+            ],
+            self.view.kind,
+            crate::panels::RadioMark::Check,
+            move |app, k| Self::mutate(&view, app, |v| v.kind = k),
+        );
+        MoonDropdown::new("orders-kind")
             .label(format!("{cur} ▾"))
             .trigger_variant(MoonButtonVariant::Soft)
             .trigger_size(MoonButtonSize::Action)
             .trigger_width(102.0)
             .menu_width(138.0)
-            .menu_size(MoonMenuSize::Compact);
-        for (k, id, label) in [
-            (OrderKind::All, "all", t!("orders.kind.all").to_string()),
-            (OrderKind::Real, "real", t!("orders.kind.real").to_string()),
-            (OrderKind::Emu, "emu", t!("orders.kind.emu").to_string()),
-        ] {
-            let view = view.clone();
-            menu = menu.item(
-                MoonMenuItem::with_key(format!("kind-{id}"), label)
-                    .checked(self.view.kind == k)
-                    .on_click(move |_, _, app| Self::mutate(&view, app, |v| v.kind = k)),
-            );
-        }
-        menu
+            .menu_size(MoonMenuSize::Compact)
+            .items(items)
     }
 
     /// Поле-список выбора отображаемых колонок таблицы. Каждый пункт — чекбокс-тогл
@@ -147,30 +155,31 @@ impl OrdersPanel {
                     }),
             )
             .item(MoonMenuItem::separator());
-        for (variant, label, id) in [
-            (
-                PrimarySort::SellFirst,
-                t!("orders.sort.sell").to_string(),
-                "m-sell",
-            ),
-            (
-                PrimarySort::BuyFirst,
-                t!("orders.sort.buy").to_string(),
-                "m-buy",
-            ),
-            (
-                PrimarySort::Creation,
-                t!("orders.sort.creation").to_string(),
-                "m-creation",
-            ),
-        ] {
-            let v = view.clone();
-            menu = menu.item(
-                MoonMenuItem::with_key(id, label)
-                    .checked(cur.primary == variant)
-                    .on_click(move |_, _, app| Self::mutate(&v, app, |s| s.primary = variant)),
-            );
-        }
+        menu = menu.items(crate::panels::radio_items(
+            [
+                (
+                    PrimarySort::SellFirst,
+                    "m-sell".into(),
+                    t!("orders.sort.sell").to_string().into(),
+                ),
+                (
+                    PrimarySort::BuyFirst,
+                    "m-buy".into(),
+                    t!("orders.sort.buy").to_string().into(),
+                ),
+                (
+                    PrimarySort::Creation,
+                    "m-creation".into(),
+                    t!("orders.sort.creation").to_string().into(),
+                ),
+            ],
+            cur.primary,
+            crate::panels::RadioMark::Check,
+            {
+                let v = view.clone();
+                move |app, variant| Self::mutate(&v, app, |s| s.primary = variant)
+            },
+        ));
         let v = view.clone();
         menu = menu.item(MoonMenuItem::separator()).item(
             MoonMenuItem::with_key("m-new", t!("orders.sort.new").to_string())

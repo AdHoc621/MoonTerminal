@@ -208,7 +208,7 @@ impl ChartTabs {
             let specs = &self.backend.read(cx).chart_specs;
             specs
                 .iter()
-                .find(|s| s.group == self.group && s.num == num && s.bucket() == *bucket)
+                .find(|s| s.matches(&self.group, num, bucket))
                 .map_or(true, |s| {
                     s.custom_coins.as_deref() != Some(coins.as_slice())
                         || s.compare_anchor != anchor

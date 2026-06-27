@@ -4,7 +4,7 @@
 
 use gpui::prelude::FluentBuilder;
 use gpui::*;
-use moon_ui::{DockArea, MoonButton, MoonButtonSize, MoonPalette};
+use moon_ui::{DockArea, MoonButton, MoonButtonSize, MoonMenuItem, MoonPalette};
 
 use crate::Backend;
 use crate::design;
@@ -13,6 +13,44 @@ use crate::detached::DetachedSpec;
 /// Адаптивный числовой формат (кол-во/цена) — общий для таблиц Orders/Assets.
 pub(crate) fn num(v: f64) -> String {
     moon_core::util::fmt::adaptive(v)
+}
+
+/// Маркер выбранного пункта radio-меню. Визуал moonui различается: `Check` — галочка справа,
+/// `Highlight` — синяя подсветка + bold, `Both` — и то и другое. Каждая панель сохраняет свой
+/// стиль (Orders — галочки, фильтры Report — подсветка), поэтому стиль передаётся явно.
+#[derive(Clone, Copy)]
+pub(crate) enum RadioMark {
+    Check,
+    Highlight,
+}
+
+/// Построить взаимоисключающие пункты `MoonDropdown::items` из списка `(value, key, label)`:
+/// пункт помечается выбранным (`mark`) при `value == current`, по клику зовёт `on_select(app,
+/// value)`. Снимает копипасту циклов построения комбобоксов в Orders/Report (источник/тип/ядро/
+/// сторона/сортировка). `value` — Copy-перечисление или индекс.
+pub(crate) fn radio_items<T, F>(
+    options: impl IntoIterator<Item = (T, SharedString, SharedString)>,
+    current: T,
+    mark: RadioMark,
+    on_select: F,
+) -> Vec<MoonMenuItem>
+where
+    T: Copy + PartialEq + 'static,
+    F: Fn(&mut App, T) + Clone + 'static,
+{
+    options
+        .into_iter()
+        .map(|(value, key, label)| {
+            let on_select = on_select.clone();
+            let sel = value == current;
+            let item = MoonMenuItem::with_key(key, label);
+            let item = match mark {
+                RadioMark::Check => item.checked(sel),
+                RadioMark::Highlight => item.selected(sel),
+            };
+            item.on_click(move |_, _, app| on_select(app, value))
+        })
+        .collect()
 }
 
 /// Хост таблицы данных док-панели (общий для Orders/Assets): контейнер на всю высоту с фоном

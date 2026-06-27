@@ -179,9 +179,13 @@ impl Render for ChartPanel {
         // стакана/управления (даже когда стакан выключен). Не влезает — ужимаем кнопки (текст
         // обрежется справа overflow_hidden). Список: (kind, x, top, w, h, core, market, armed).
         const ACT_BTN_W: f32 = 92.0;
-        const ACT_BTN_H: f32 = 26.0;
         const ACT_GAP: f32 = 8.0;
         const ACT_MIN_W: f32 = 30.0;
+        // Кнопки — MoonButton размера Micro (маленькие, как close/pin/lock-оверлей чарта). Их
+        // высоту для раскладки берём ИЗ ТЕМЫ (масштабируется ползунком шрифта, как сама кнопка),
+        // а не хардкод-числом: базовые метрики Micro (h18/line12/pad3) — те же, что moonui считает
+        // в height_for_size → MoonTheme::fit_height. Ширину кнопок задаём мы (зона чарта).
+        let act_btn_h = crate::design::fit_h_value(cx, 18.0, 12.0, 3.0);
         let cancel_pos = self.cancel_buy_pos;
         let panic_pos = self.panic_sell_pos;
         // Одиночный пейн (фулскрин Main) → кнопки кладём GPUI-раскладкой ниже (`action_overlay`):
@@ -209,7 +213,7 @@ impl Render for ChartPanel {
                 if zone_w < ACT_MIN_W {
                     continue;
                 }
-                let top = (rect.y + rect.h) / ppp - moon_chart::TIME_AXIS_H - ACT_BTN_H - 10.0;
+                let top = (rect.y + rect.h) / ppp - moon_chart::TIME_AXIS_H - act_btn_h - 10.0;
                 let armed = self.backend.read(cx).is_panic_armed(core, &market);
                 // Видимые кнопки (kind, anchor) в стабильном порядке.
                 let mut vis: Vec<(ActKind, ChartBtnPos)> = Vec::new();
@@ -274,7 +278,7 @@ impl Render for ChartPanel {
                     placed.push((b.0, xb));
                 }
                 for (kind, x) in placed {
-                    action_btns.push((kind, x, top, bw, ACT_BTN_H, core, market.clone(), armed));
+                    action_btns.push((kind, x, top, bw, act_btn_h, core, market.clone(), armed));
                 }
             }
         }
@@ -299,7 +303,7 @@ impl Render for ChartPanel {
                     };
                     MoonButton::new(SharedString::from(id))
                         .label(label)
-                        .size(MoonButtonSize::ToolbarCompact)
+                        .size(MoonButtonSize::Micro)
                         .variant(variant)
                         .selected(selected)
                         .on_click(move |_, _w, app| match kind {
@@ -360,7 +364,7 @@ impl Render for ChartPanel {
                         .child(
                             div()
                                 .w_full()
-                                .h(px(ACT_BTN_H))
+                                .h(px(act_btn_h))
                                 .flex()
                                 .items_center()
                                 .child(region(left).justify_start())
@@ -892,7 +896,7 @@ impl Render for ChartPanel {
                     };
                     let btn = MoonButton::new(SharedString::from(id))
                         .label(label)
-                        .size(MoonButtonSize::ToolbarCompact)
+                        .size(MoonButtonSize::Micro)
                         .variant(variant)
                         .selected(selected)
                         .full_width()
