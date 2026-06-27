@@ -15,7 +15,8 @@ use windows::Win32::Graphics::Direct3D11::*;
 use super::gpu::{
     BlitParams, ChartCross, ChartViewGpu, create_alpha_blend, create_dynamic_cb,
     create_point_sampler, create_premultiplied_alpha_blend, create_srv, create_srv_range,
-    create_structured, full_viewport, ring_write_no_overwrite, set_scissor_rect, update_dynamic,
+    create_structured, device_changed, full_viewport, ring_write_no_overwrite, set_scissor_rect,
+    update_dynamic,
 };
 use super::types::{
     DEFAULT_VOLUME_ALPHA, append_cross_ring, cross_volume_max, evicted_cross_ranges,
@@ -187,8 +188,7 @@ impl ComboLayer {
         // device-lost guard (P0-4): новый device → старые буферы/шейдеры/кольцо невалидны.
         // Сбрасываем ресурсы И счётчики кольца: пересозданный буфер пуст, а stale count заставил
         // бы DrawInstanced читать мусор. device_gen++ → prepare перезальёт всю историю (collect_all).
-        let generation = gpu.device_generation();
-        if self.device_generation_seen != generation {
+        if device_changed(&mut self.device_generation_seen, gpu) {
             self.pipe = None;
             self.tex = None;
             self.count = 0;
@@ -198,7 +198,6 @@ impl ComboLayer {
             self.resident_count = 0;
             self.last_line_count = 0;
             self.mark_line_count = 0;
-            self.device_generation_seen = generation;
             self.device_gen = self.device_gen.wrapping_add(1);
         }
         if self.pipe.is_none() {

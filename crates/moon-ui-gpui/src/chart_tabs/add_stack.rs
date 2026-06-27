@@ -6,10 +6,9 @@ use gpui::*;
 use moon_ui::MoonVirtualListScrollHandle;
 
 use super::stack::{
-    ChartStackEntry, CompareRole, HIGHLIGHT, apply_compare, chart_stack_card,
-    handle_compare_broom_requests, handle_compare_lock_requests, render_chart_stack,
+    ChartStackEntry, HIGHLIGHT, apply_setting, chart_stack_card, compare_role, render_chart_stack,
     resolve_layout, set_panels_action_btn_pos, set_panels_auto_pin, set_panels_orderbook_enabled,
-    set_panels_price_axis_pos, set_panels_scale, set_panels_show_zone,
+    set_panels_price_axis_pos, set_panels_scale, set_panels_show_zone, sync_compare,
 };
 use crate::Backend;
 use crate::chart_persist::{ChartBtnPos, PriceAxisPos, StackLayoutMode, StackOrientation};
@@ -110,27 +109,6 @@ impl AddChartStack {
         self.compare_anchor.clone()
     }
 
-    /// Роль слота для размеров метлы: Normal (метла выкл), Anchor (с замком) или Follower (стакан).
-    fn compare_role(&self, ix: usize) -> CompareRole {
-        if !self.compare_orderbook_only {
-            return CompareRole::Normal;
-        }
-        match self.charts.get(ix) {
-            Some(e) => {
-                let is_anchor = self
-                    .compare_anchor
-                    .as_ref()
-                    .is_some_and(|k| k.0 == e.core && k.1 == e.market);
-                if is_anchor {
-                    CompareRole::Anchor
-                } else {
-                    CompareRole::Follower
-                }
-            }
-            None => CompareRole::Normal,
-        }
-    }
-
     pub(crate) fn compare_orderbook_only(&self) -> bool {
         self.compare_orderbook_only
     }
@@ -151,24 +129,12 @@ impl AddChartStack {
     /// влево; переключить «только стакан»), затем навязать общее Y-окно/флаги панелям. В вертикали
     /// сравнение выключено.
     fn sync_compare(&mut self, cx: &mut Context<Self>) {
-        let horizontal = self
-            .layout_orientation
-            .unwrap_or(StackOrientation::Vertical)
-            .is_horizontal();
-        if !horizontal {
-            self.compare_anchor = None;
-        }
-        handle_compare_lock_requests(&mut self.charts, &mut self.compare_anchor, cx);
-        handle_compare_broom_requests(&self.charts, &mut self.compare_orderbook_only, cx);
-        if self.compare_anchor.is_none() {
-            self.compare_orderbook_only = false;
-        }
-        apply_compare(
-            &self.charts,
-            &self.compare_anchor,
+        sync_compare(
+            &mut self.charts,
+            &mut self.compare_anchor,
             &mut self.compare_y,
-            horizontal,
-            self.compare_orderbook_only,
+            &mut self.compare_orderbook_only,
+            self.layout_orientation,
             cx,
         );
     }
@@ -309,12 +275,9 @@ impl AddChartStack {
     }
 
     pub(crate) fn set_scale(&mut self, pct: Option<f32>, cx: &mut Context<Self>) {
-        if self.scale == pct {
-            return;
-        }
-        self.scale = pct;
-        set_panels_scale(&self.charts, pct, cx);
-        cx.notify();
+        apply_setting(&mut self.scale, pct, &self.charts, cx, |c, cx| {
+            set_panels_scale(c, pct, cx)
+        });
     }
 
     pub(crate) fn orderbook_enabled(&self) -> Option<bool> {
@@ -354,12 +317,9 @@ impl AddChartStack {
 
     /// Вкл/выкл заливку зоны управления для всех графиков стека (per-окно).
     pub(crate) fn set_show_zone(&mut self, show: Option<bool>, cx: &mut Context<Self>) {
-        if self.show_zone == show {
-            return;
-        }
-        self.show_zone = show;
-        set_panels_show_zone(&self.charts, show.unwrap_or(true), cx);
-        cx.notify();
+        apply_setting(&mut self.show_zone, show, &self.charts, cx, |c, cx| {
+            set_panels_show_zone(c, show.unwrap_or(true), cx)
+        });
     }
 
     pub(crate) fn auto_pin(&self) -> Option<bool> {
@@ -397,22 +357,16 @@ impl AddChartStack {
 
     /// Положение оси цен (Left/Right/Hide) для всех графиков стека (per-окно).
     pub(crate) fn set_price_axis_pos(&mut self, pos: Option<PriceAxisPos>, cx: &mut Context<Self>) {
-        if self.price_axis_pos == pos {
-            return;
-        }
-        self.price_axis_pos = pos;
-        set_panels_price_axis_pos(&self.charts, pos.unwrap_or_default(), cx);
-        cx.notify();
+        apply_setting(&mut self.price_axis_pos, pos, &self.charts, cx, |c, cx| {
+            set_panels_price_axis_pos(c, pos.unwrap_or_default(), cx)
+        });
     }
 
     /// Вкл/выкл авто-пин при ордере для всех графиков стека (per-окно).
     pub(crate) fn set_auto_pin(&mut self, on: Option<bool>, cx: &mut Context<Self>) {
-        if self.auto_pin == on {
-            return;
-        }
-        self.auto_pin = on;
-        set_panels_auto_pin(&self.charts, on.unwrap_or(false), cx);
-        cx.notify();
+        apply_setting(&mut self.auto_pin, on, &self.charts, cx, |c, cx| {
+            set_panels_auto_pin(c, on.unwrap_or(false), cx)
+        });
     }
 
     pub(crate) fn layout_orientation(&self) -> Option<StackOrientation> {
@@ -635,7 +589,7 @@ impl Render for AddChartStack {
                 });
                 tile.children(highlight).into_any_element()
             },
-            |s, ix| s.compare_role(ix),
+            |s, ix| compare_role(&s.charts, &s.compare_anchor, s.compare_orderbook_only, ix),
         )
     }
 }

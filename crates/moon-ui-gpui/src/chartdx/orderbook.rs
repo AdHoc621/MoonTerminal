@@ -13,8 +13,8 @@ use windows::Win32::Graphics::Direct3D11::*;
 
 use super::gpu::{
     BlitParams, ChartViewGpu, create_alpha_blend, create_dynamic_cb, create_point_sampler,
-    create_srv, create_structured, full_viewport, make_ps, make_vs, set_scissor_rect,
-    update_dynamic,
+    create_srv, create_structured, device_changed, full_viewport, make_ps, make_vs,
+    set_scissor_rect, update_dynamic,
 };
 pub use super::types::BookStyle;
 
@@ -99,12 +99,10 @@ impl OrderBookLayer {
             return;
         }
         // device-lost: пересоздать pipe и текстуру; count=0 (prepare зальёт уровни заново).
-        let generation = gpu.device_generation();
-        if self.device_generation != generation {
+        if device_changed(&mut self.device_generation, gpu) {
             self.pipe = None;
             self.tex = None;
             self.count = 0;
-            self.device_generation = generation;
         }
         if self.pipe.is_none() {
             self.pipe = Some(Self::create_pipe(device, INITIAL_LEVEL_BUFFER_CAPACITY));

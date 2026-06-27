@@ -8,8 +8,8 @@ use windows::Win32::Graphics::Direct3D11::*;
 use windows::Win32::Graphics::Dxgi::Common::{DXGI_FORMAT_R8G8B8A8_UNORM, DXGI_SAMPLE_DESC};
 
 use super::gpu::{
-    create_alpha_blend, create_dynamic_cb, create_point_sampler, full_viewport, make_ps, make_vs,
-    update_dynamic,
+    create_alpha_blend, create_dynamic_cb, create_point_sampler, device_changed, full_viewport,
+    make_ps, make_vs, update_dynamic,
 };
 pub use super::types::BackgroundParams;
 
@@ -55,10 +55,8 @@ impl BackgroundLayer {
         if params.dst[2] <= 0.0 || params.dst[3] <= 0.0 {
             return;
         }
-        let generation = gpu.device_generation();
-        if self.device_generation != generation {
+        if device_changed(&mut self.device_generation, gpu) {
             self.pipe = None;
-            self.device_generation = generation;
         }
         if self.pipe.is_none() {
             self.pipe = Some(Self::create_pipe(device, self.png));

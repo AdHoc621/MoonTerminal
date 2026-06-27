@@ -12,42 +12,15 @@ use windows::Win32::Graphics::Direct3D11::*;
 
 use super::gpu::{
     ChartViewGpu, create_alpha_blend, create_dynamic_cb, create_srv, create_structured,
-    full_viewport, make_ps, make_vs, update_dynamic,
+    device_changed, full_viewport, make_ps, make_vs, update_dynamic,
 };
-use super::types::{HLineGpu, MarkerGpu, SegGpu, ZoneGpu};
+use super::types::{HLineGpu, MarkerGpu, SegGpu, ZoneGpu, hl_of, mk_of, seg_of, zone_of};
 
 const HLSL: &str = include_str!("shaders/order_lines.hlsl");
 const INITIAL_ZONE_BUFFER_CAPACITY: u32 = 64;
 const INITIAL_HLINE_BUFFER_CAPACITY: u32 = 256;
 const INITIAL_SEG_BUFFER_CAPACITY: u32 = 512;
 const INITIAL_MARKER_BUFFER_CAPACITY: u32 = 512;
-
-fn hl_of(h: &LineInstance) -> HLineGpu {
-    HLineGpu {
-        color: h.color,
-        m: [h.price, h.style, h.thickness, 0.0],
-    }
-}
-fn zone_of(z: &ZoneInstance) -> ZoneGpu {
-    ZoneGpu {
-        color: z.color,
-        m: [z.price0, z.price1, 0.0, 0.0],
-    }
-}
-fn seg_of(s: &SegInstance) -> SegGpu {
-    SegGpu {
-        pts: [s.t0_rel, s.p0, s.t1_rel, s.p1],
-        color: s.color,
-        m: [s.thickness, s.pattern, s.extend, 0.0],
-    }
-}
-fn mk_of(m: &MarkerInstance) -> MarkerGpu {
-    MarkerGpu {
-        color: m.color,
-        pos: [m.t_rel, m.price, m.size, m.thickness],
-        m: [m.shape, 0.0, 0.0, 0.0],
-    }
-}
 
 struct UdPipe {
     zone_vs: ID3D11VertexShader,
@@ -130,14 +103,12 @@ impl UserDataLayer {
     ) {
         // device-lost: пересоздать pipe; счётчики 0 — буферы пересоздаются пустыми (prepare зальёт
         // ордера заново этим же кадром через set()/pending, инвариант: новый device = 0 валидных).
-        let generation = gpu.device_generation();
-        if self.device_generation != generation {
+        if device_changed(&mut self.device_generation, gpu) {
             self.pipe = None;
             self.zone_count = 0;
             self.hl_count = 0;
             self.seg_count = 0;
             self.mk_count = 0;
-            self.device_generation = generation;
         }
         if self.pipe.is_none() {
             self.pipe = Some(Self::create_pipe(

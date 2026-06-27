@@ -323,6 +323,19 @@ pub fn ring_write_no_overwrite<T: Copy>(
 // ───────────────────────── Мелочи ─────────────────────────
 
 /// Полный backbuffer-viewport (px из хука). Слои ставят его перед draw в backbuffer.
+/// device-lost guard, общий для всех own-pass слоёв: вернуть true и обновить `seen`, если GPU-устройство
+/// сменилось (generation вырос). Слой-вызыватель сам сбрасывает свои ресурсы/счётчики внутри `if` —
+/// набор сбрасываемого у слоёв разный (combo ещё бампает `device_gen`), поэтому общая только эта проверка.
+pub fn device_changed(seen: &mut u64, gpu: &RawGpuAccess) -> bool {
+    let generation = gpu.device_generation();
+    if *seen != generation {
+        *seen = generation;
+        true
+    } else {
+        false
+    }
+}
+
 pub fn full_viewport(gpu: &RawGpuAccess) -> D3D11_VIEWPORT {
     D3D11_VIEWPORT {
         TopLeftX: 0.0,

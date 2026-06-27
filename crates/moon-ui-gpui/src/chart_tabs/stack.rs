@@ -10,7 +10,7 @@ use moon_ui::{
     MoonVirtualListScrollHandle, h_flex, v_flex,
 };
 
-use crate::chart_persist::StackLayoutMode;
+use crate::chart_persist::{StackLayoutMode, StackOrientation};
 use crate::panels::ChartPanel;
 use moon_core::session::CoreId;
 
@@ -341,6 +341,82 @@ pub(super) fn apply_compare<S: 'static>(
             p.set_compare_broom_on(is_anchor && orderbook_only, c);
         });
     }
+}
+
+/// Роль слота `ix` в режиме метлы: `Normal` если «только стакан» выкл; иначе `Anchor` для слота-якоря
+/// (по `(core, market)`), `Follower` для остальных. Общая для Main/AddToChart стеков.
+pub(super) fn compare_role(
+    entries: &[ChartStackEntry],
+    anchor: &Option<(CoreId, String)>,
+    orderbook_only: bool,
+    ix: usize,
+) -> CompareRole {
+    if !orderbook_only {
+        return CompareRole::Normal;
+    }
+    match entries.get(ix) {
+        Some(e) => {
+            let is_anchor = anchor
+                .as_ref()
+                .is_some_and(|k| k.0 == e.core && k.1 == e.market);
+            if is_anchor {
+                CompareRole::Anchor
+            } else {
+                CompareRole::Follower
+            }
+        }
+        None => CompareRole::Normal,
+    }
+}
+
+/// Синхронизировать режим сравнения стека (общая для Main/AddToChart): в вертикали снять якорь;
+/// забрать клики замка/метлы у панелей (сменить/снять якорь, переставить влево; переключить «только
+/// стакан»); при снятом якоре выключить «только стакан»; навязать панелям общее Y-окно/флаги.
+/// Возвращает true, если якорь/порядок изменились (нужен notify стека).
+pub(super) fn sync_compare<S: 'static>(
+    entries: &mut Vec<ChartStackEntry>,
+    anchor: &mut Option<(CoreId, String)>,
+    shared: &mut Option<(f32, f32)>,
+    orderbook_only: &mut bool,
+    orientation: Option<StackOrientation>,
+    cx: &mut Context<S>,
+) -> bool {
+    let horizontal = orientation
+        .unwrap_or(StackOrientation::Vertical)
+        .is_horizontal();
+    if !horizontal {
+        *anchor = None;
+    }
+    let mut changed = handle_compare_lock_requests(entries, anchor, cx);
+    changed |= handle_compare_broom_requests(entries, orderbook_only, cx);
+    if anchor.is_none() {
+        *orderbook_only = false;
+    }
+    apply_compare(entries, anchor, shared, horizontal, *orderbook_only, cx);
+    changed
+}
+
+/// Применить новое значение поля-настройки стека ко всем панелям: если не изменилось — выйти; иначе
+/// записать поле, навязать панелям через `apply` и `cx.notify()`. Убирает повтор «if ==new return;
+/// assign; set_panels_*; notify» в сеттерах Main/AddToChart. `field` и `entries` — РАЗНЫЕ поля
+/// вызывающего стека (disjoint borrow), поэтому `apply` не захватывает `self`.
+pub(super) fn apply_setting<S, T, F>(
+    field: &mut T,
+    new: T,
+    entries: &[ChartStackEntry],
+    cx: &mut Context<S>,
+    apply: F,
+) where
+    S: 'static,
+    T: PartialEq,
+    F: FnOnce(&[ChartStackEntry], &mut Context<S>),
+{
+    if *field == new {
+        return;
+    }
+    *field = new;
+    apply(entries, cx);
+    cx.notify();
 }
 
 /// Убрать из стека панели без графиков. Возвращает true, если состав изменился.

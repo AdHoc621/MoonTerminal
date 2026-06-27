@@ -19,8 +19,9 @@ use std::ffi::c_void;
 use super::types::{
     BackgroundParams, BookStyle, ChartCross, ChartViewGpu, CursorParams, DEFAULT_VOLUME_ALPHA,
     GridParams, HLineGpu, MarkerGpu, ReadoutRect, SegGpu, ZoneGpu, append_cross_ring,
-    cross_append_ranges, cross_volume_max, evicted_cross_ranges, ordered_cross_ring,
-    ranges_have_entries, ranges_touch_volume_max, reset_cross_ring, update_cross_volume_max,
+    cross_append_ranges, cross_volume_max, evicted_cross_ranges, hl_of, mk_of, ordered_cross_ring,
+    ranges_have_entries, ranges_touch_volume_max, reset_cross_ring, seg_of, update_cross_volume_max,
+    zone_of,
 };
 
 const SHADER: &str = include_str!("shaders/chart_native.metal");
@@ -33,36 +34,6 @@ fn texel_aligned_time0(time0: f32, time_to_px: f32) -> f32 {
         return time0;
     }
     (time0 * time_to_px).floor() / time_to_px
-}
-
-fn hl_of(h: &LineInstance) -> HLineGpu {
-    HLineGpu {
-        color: h.color,
-        m: [h.price, h.style, h.thickness, 0.0],
-    }
-}
-
-fn zone_of(z: &ZoneInstance) -> ZoneGpu {
-    ZoneGpu {
-        color: z.color,
-        m: [z.price0, z.price1, 0.0, 0.0],
-    }
-}
-
-fn seg_of(s: &SegInstance) -> SegGpu {
-    SegGpu {
-        pts: [s.t0_rel, s.p0, s.t1_rel, s.p1],
-        color: s.color,
-        m: [s.thickness, s.pattern, s.extend, 0.0],
-    }
-}
-
-fn mk_of(m: &MarkerInstance) -> MarkerGpu {
-    MarkerGpu {
-        color: m.color,
-        pos: [m.t_rel, m.price, m.size, m.thickness],
-        m: [m.shape, 0.0, 0.0, 0.0],
-    }
 }
 
 #[derive(Default)]

@@ -2,6 +2,7 @@
 //! Плюс мелкие билдеры/хелперы, превращающие данные фида в эти GPU-инстансы.
 
 use bytemuck::Zeroable;
+use moon_chart::layers::{LineInstance, MarkerInstance, SegInstance, ZoneInstance};
 use moon_core::data::PriceLinePoint;
 use moon_core::feed::{PricePoint, Side, Tick};
 
@@ -381,4 +382,36 @@ pub struct MarkerGpu {
     pub color: [f32; 4],
     pub pos: [f32; 4],
     pub m: [f32; 4],
+}
+
+// Конвертеры инстансов order-lines (`moon_chart::layers`) в 16-байт-выровненные GPU-структы.
+// Общие для DX11 (userdata)/Metal/wgpu бэкендов — раньше дублировались в каждом.
+pub fn hl_of(h: &LineInstance) -> HLineGpu {
+    HLineGpu {
+        color: h.color,
+        m: [h.price, h.style, h.thickness, 0.0],
+    }
+}
+
+pub fn zone_of(z: &ZoneInstance) -> ZoneGpu {
+    ZoneGpu {
+        color: z.color,
+        m: [z.price0, z.price1, 0.0, 0.0],
+    }
+}
+
+pub fn seg_of(s: &SegInstance) -> SegGpu {
+    SegGpu {
+        pts: [s.t0_rel, s.p0, s.t1_rel, s.p1],
+        color: s.color,
+        m: [s.thickness, s.pattern, s.extend, 0.0],
+    }
+}
+
+pub fn mk_of(m: &MarkerInstance) -> MarkerGpu {
+    MarkerGpu {
+        color: m.color,
+        pos: [m.t_rel, m.price, m.size, m.thickness],
+        m: [m.shape, 0.0, 0.0, 0.0],
+    }
 }
