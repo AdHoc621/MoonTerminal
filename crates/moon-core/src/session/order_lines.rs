@@ -164,6 +164,10 @@ pub struct RetainedOrder {
     pub size: f32,
     /// Заполнение входной ноги, % (0..100) — для подписи «куплено» (qty = size·fill/100).
     pub fill_pct: f32,
+    /// Порядковый номер ордера НА ЧАРТЕ (per-market): присваивается при создании, растёт пока на
+    /// рынке есть открытые ордера, сбрасывается на 1 когда рынок опустел. Sell/стопы наследуют его
+    /// (это тот же ордер). 0 = не присвоен. Связывает линии одного ордера в подписях `[N]`.
+    pub chart_num: u32,
     pub pending: bool,
     pub panic_sell: bool,
     pub is_moon_shot: bool,
@@ -201,6 +205,7 @@ impl RetainedOrder {
             is_short: r.is_short,
             size: r.size as f32,
             fill_pct: r.fill_pct,
+            chart_num: 0,
             pending: r.pending,
             panic_sell: r.panic_sell,
             is_moon_shot: r.is_moon_shot,
@@ -247,6 +252,33 @@ impl OrderLineStore {
         let mut close_now: Vec<u64> = Vec::new();
         let mut closed_this_update: Vec<u64> = Vec::new();
 
+        // Порядковые номера НОВЫХ ордеров (в порядке создания = по uid). Берём НАИМЕНЬШИЙ
+        // свободный номер среди ОТКРЫТЫХ ордеров рынка (как слоты): закрылся №1 — следующий снова
+        // займёт 1, а не плодим новые пока что-то стоит. На пустом рынке это естественно даёт 1.
+        let mut new_nums: HashMap<u64, u32> = HashMap::new();
+        {
+            let mut used: HashMap<String, HashSet<u32>> = HashMap::new();
+            for o in self.orders.values() {
+                if o.closed_ms.is_none() && o.chart_num > 0 {
+                    used.entry(o.market.clone()).or_default().insert(o.chart_num);
+                }
+            }
+            let mut fresh: Vec<&OrderRow> = rows
+                .iter()
+                .filter(|r| !self.orders.contains_key(&r.uid))
+                .collect();
+            fresh.sort_by_key(|r| r.uid);
+            for r in fresh {
+                let set = used.entry(r.market.clone()).or_default();
+                let mut n = 1u32;
+                while set.contains(&n) {
+                    n += 1;
+                }
+                set.insert(n);
+                new_nums.insert(r.uid, n);
+            }
+        }
+
         for r in rows {
             seen.insert(r.uid);
             let order = match self.orders.entry(r.uid) {
@@ -255,7 +287,9 @@ impl OrderLineStore {
                     let seq = self.seq_counter;
                     self.seq_counter = self.seq_counter.wrapping_add(1);
                     changed = true;
-                    entry.insert(RetainedOrder::new(r, now_ms, seq))
+                    let mut ro = RetainedOrder::new(r, now_ms, seq);
+                    ro.chart_num = new_nums.get(&r.uid).copied().unwrap_or(0);
+                    entry.insert(ro)
                 }
             };
             order.last_seen_ms = now_ms;

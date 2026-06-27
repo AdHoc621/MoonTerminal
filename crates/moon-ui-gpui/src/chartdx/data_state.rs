@@ -367,7 +367,6 @@ impl ChartDataState {
                         &mut pr.order_labels,
                         &core_st.order_lines,
                         &pane.market,
-                        &self.orders,
                         quote_usd,
                     );
                     pr.last_order_lines_rev = core_st.order_lines_rev;
@@ -963,7 +962,6 @@ fn build_order_labels(
     out: &mut Vec<OrderLabel>,
     store: &moon_core::session::order_lines::OrderLineStore,
     market: &str,
-    style: &OrdersStyle,
     quote_usd: Option<f64>,
 ) {
     out.clear();
@@ -975,53 +973,75 @@ fn build_order_labels(
         let sell = o.lines[LineKind::Sell as usize].current_price();
         let stop = o.lines[LineKind::Stop as usize].current_price();
         let short = o.is_short;
-        // BUY: фактический размер ордера в $-ноционале (size·entry·курс). Лонг → над линией,
-        // шорт → под. Курс неизвестен → fallback на размер в базовой монете (без $).
+        // Порядковый номер ордера на чарте — на основной подписи каждой линии (buy/sell/stop),
+        // чтобы связать линии одного ордера: «$X [10]», «-5% [10]», стоп «-3% [10]».
+        let tag = if o.chart_num > 0 {
+            format!(" [{}]", o.chart_num)
+        } else {
+            String::new()
+        };
+        // BUY (линия входа): пока ордер ОЖИДАЕТ (не исполнен, fill=0) — показываем размер в
+        // $-ноционале + номер. Как только ИСПОЛНЕН — на линии входа остаётся только номер [N]
+        // (размер ушёл в позицию, на входе метка), как в MoonBot. Лонг → над линией, шорт → под.
         if let Some(bp) = buy {
-            if o.size > 0.0 && bp > 0.0 {
-                let text = match quote_usd {
-                    Some(rate) if rate > 0.0 => fmt_usd(o.size as f64 * bp as f64 * rate),
-                    _ => fmt_amount(o.size),
+            if bp > 0.0 {
+                let executed = o.fill_pct > 0.0;
+                let text = if executed {
+                    tag.trim_start().to_string()
+                } else if o.size > 0.0 {
+                    let amount = match quote_usd {
+                        Some(rate) if rate > 0.0 => fmt_usd(o.size as f64 * bp as f64 * rate),
+                        _ => fmt_amount(o.size),
+                    };
+                    format!("{amount}{tag}")
+                } else {
+                    String::new()
                 };
-                out.push(OrderLabel {
-                    price: bp,
-                    text,
-                    above: !short,
-                    color: rgb_u32(style.buy.color),
-                });
+                if !text.is_empty() {
+                    out.push(OrderLabel {
+                        price: bp,
+                        text,
+                        above: !short,
+                        color: side_color(short),
+                    });
+                }
             }
         }
-        // SELL: % от цены покупки (сверху у шорта) + количество купленного (снизу у шорта).
-        // Проценты красим знаково: плюс → зелёный, минус → красный.
+        // SELL: профит-% от цены входа (знаковый цвет) + РАЗМЕР на продажу в $-ноционале
+        // (size·цена_продажи·курс) на противоположной стороне линии — как в MoonBot. Это тот же
+        // размер ордера, но оценённый по цене продажи (отсюда лёгкое отличие от buy-ноционала).
         if let Some(sp) = sell {
             if let Some(bp) = buy {
                 if bp > 0.0 {
-                    let pct = (sp - bp) / bp * 100.0;
+                    let pct = signed_pct(sp, bp, short);
                     out.push(OrderLabel {
                         price: sp,
-                        text: fmt_pct(pct),
+                        text: format!("{}{tag}", fmt_pct(pct)),
                         above: short,
                         color: pct_color(pct),
                     });
                 }
             }
-            let bought = o.size * (o.fill_pct / 100.0).clamp(0.0, 1.0);
-            if bought > 0.0 {
+            if o.size > 0.0 && sp > 0.0 {
+                let amount = match quote_usd {
+                    Some(rate) if rate > 0.0 => fmt_usd(o.size as f64 * sp as f64 * rate),
+                    _ => fmt_amount(o.size),
+                };
                 out.push(OrderLabel {
                     price: sp,
-                    text: fmt_amount(bought),
+                    text: amount,
                     above: !short,
-                    color: rgb_u32(style.sell.color),
+                    color: side_color(short),
                 });
             }
         }
         // STOP: % стопа от цены покупки. Шорт → сверху, лонг → снизу. Знаковый цвет.
         if let (Some(stp), Some(bp)) = (stop, buy) {
             if bp > 0.0 {
-                let pct = (stp - bp) / bp * 100.0;
+                let pct = signed_pct(stp, bp, short);
                 out.push(OrderLabel {
                     price: stp,
-                    text: fmt_pct(pct),
+                    text: format!("{}{tag}", fmt_pct(pct)),
                     above: short,
                     color: pct_color(pct),
                 });
@@ -1032,6 +1052,27 @@ fn build_order_labels(
 
 fn rgb_u32(c: [u8; 3]) -> u32 {
     ((c[0] as u32) << 16) | ((c[1] as u32) << 8) | c[2] as u32
+}
+
+/// Знаковый процент уровня от цены входа С УЧЁТОМ СТОРОНЫ: лонг — как есть; шорт —
+/// инвертирован (выше входа = минус). Так профит у обеих сторон зелёный, лосс красный (как MB):
+/// для шорта sell ниже входа → «+», стоп выше входа → «−».
+fn signed_pct(level: f32, entry: f32, short: bool) -> f32 {
+    let raw = (level - entry) / entry * 100.0;
+    if short {
+        -raw
+    } else {
+        raw
+    }
+}
+
+/// Цвет подписи размера по стороне ордера: лонг → зелёный, шорт → красный (палитра ядра).
+fn side_color(short: bool) -> u32 {
+    if short {
+        rgb_u32(moon_core::palette::RED)
+    } else {
+        rgb_u32(moon_core::palette::GREEN)
+    }
 }
 
 /// Цвет знакового процента: плюс → зелёный, минус → красный (палитра ядра).

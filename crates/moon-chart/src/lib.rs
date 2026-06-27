@@ -16,6 +16,9 @@ const SEG_PATTERN_DASH_DOT_DOT: f32 = 1.0;
 const SEG_PATTERN_DOT: f32 = 2.0;
 /// MoonBot: `ShowLightLines := T.RangeT > 0.02`, где RangeT — Delphi days.
 const MB_TRACE_LIGHT_RANGE_MS: f32 = 0.02 * 86_400_000.0;
+/// Множитель прозрачности линий ВЫСТАВЛЕННОГО, но ещё не исполненного ордера (вход не залит):
+/// рисуем тусклее активного, как в MoonBot (после исполнения линия становится ярче).
+const PENDING_ALPHA_MUL: f32 = 0.7;
 
 pub mod axes;
 pub mod container;
@@ -101,8 +104,12 @@ pub fn build_order_geometry(
         if end_rel < left_rel || start_rel > right_rel {
             continue;
         }
+        // Выставленный, но ещё НЕ исполненный (вход не залит, fill=0) → тусклее: после исполнения
+        // линия становится ярче (как в MoonBot). Закрытый — отдельный, самый тусклый уровень.
         let alpha = if closed {
             style.closed_alpha
+        } else if ord.fill_pct <= 0.0 {
+            style.active_alpha * PENDING_ALPHA_MUL
         } else {
             style.active_alpha
         };
