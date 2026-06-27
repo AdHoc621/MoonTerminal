@@ -216,6 +216,9 @@ struct PaneRender {
     orderbook_enabled: bool,
     /// Режим «только стакан» этой панели (чарт+ось цен скрыты, стакан на всю ширину).
     orderbook_only: bool,
+    /// Положение оси цен (Left/Right/Hide) — определяет, с какой стороны рисуются подписи оси
+    /// и где резервируется жёлоб под неё. Применяется ко всем панелям движка.
+    price_axis_pos: crate::chart_persist::PriceAxisPos,
     /// CPU/base inputs changed and D3D prepare must upload/bake resident resources before draw.
     /// Cursor-only presents leave this false.
     gpu_prepare_dirty: bool,
@@ -273,6 +276,7 @@ impl PaneRender {
             active: false,
             orderbook_enabled: true,
             orderbook_only: false,
+            price_axis_pos: crate::chart_persist::PriceAxisPos::Left,
             gpu_prepare_dirty: true,
         }
     }
@@ -464,6 +468,9 @@ struct ChartDataState {
     /// Режим «только стакан» (кнопка-метла в сравнении): чарт и ось цен скрыты, стакан на всю
     /// ширину. Применяется ко всем панелям этого движка (у соседей якоря).
     orderbook_only: bool,
+    /// Положение оси цен (Left/Right/Hide), per-окно. Управляет раскладкой жёлоба оси и стороной
+    /// рендера подписей. Дефолт — Left (жёлоб слева, исторический вид).
+    price_axis_pos: crate::chart_persist::PriceAxisPos,
     /// Интерактивная подсветка линии ордера (hover/drag). Это не меняет рыночные данные:
     /// только заставляет редкую пересборку userdata при смене uid.
     order_highlight: Option<(CoreId, u64)>,

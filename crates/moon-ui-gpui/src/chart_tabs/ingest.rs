@@ -112,6 +112,7 @@ impl ChartTabs {
                     saved_show_zone,
                     saved_auto_pin,
                     saved_action_pos,
+                    saved_axis_pos,
                 ) = {
                     let specs = &self.backend.read(cx).chart_specs;
                     let spec = specs
@@ -126,6 +127,7 @@ impl ChartTabs {
                         spec.and_then(|s| s.show_zone),
                         spec.and_then(|s| s.auto_pin),
                         spec.map_or((None, None), |s| (s.cancel_buy_pos, s.panic_sell_pos)),
+                        spec.and_then(|s| s.price_axis_pos),
                     )
                 };
                 if saved_scale.is_some() {
@@ -150,6 +152,9 @@ impl ChartTabs {
                     panel.update(cx, |p, pcx| {
                         p.set_action_btn_pos(saved_action_pos.0, saved_action_pos.1, pcx)
                     });
+                }
+                if saved_axis_pos.is_some() {
+                    panel.update(cx, |p, pcx| p.set_price_axis_pos(saved_axis_pos, pcx));
                 }
                 panel.update(cx, |p, pcx| p.add_coin(core, &market, ttl, pcx));
                 self.add.push((n, bucket.clone(), panel));

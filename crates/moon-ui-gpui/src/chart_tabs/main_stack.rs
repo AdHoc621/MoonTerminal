@@ -10,11 +10,11 @@ use moon_ui::{MoonPalette, MoonVirtualListScrollHandle};
 use super::stack::{
     ChartStackEntry, CompareRole, apply_compare, chart_stack_card, handle_compare_broom_requests,
     handle_compare_lock_requests, render_chart_stack, resolve_layout, retain_nonempty_panels,
-    set_panels_action_btn_pos, set_panels_auto_pin, set_panels_orderbook_enabled, set_panels_scale,
-    set_panels_show_zone,
+    set_panels_action_btn_pos, set_panels_auto_pin, set_panels_orderbook_enabled,
+    set_panels_price_axis_pos, set_panels_scale, set_panels_show_zone,
 };
 use crate::Backend;
-use crate::chart_persist::{ChartBtnPos, StackLayoutMode, StackOrientation};
+use crate::chart_persist::{ChartBtnPos, PriceAxisPos, StackLayoutMode, StackOrientation};
 use crate::panels::ChartPanel;
 use moon_core::config::ChartTheme;
 use moon_core::session::CoreId;
@@ -49,6 +49,8 @@ pub(crate) struct MainChartStack {
     /// Позиции кнопок Cancel Buy / Panic Sell в зоне чарта (per-окно). None = дефолт (Right).
     cancel_buy_pos: Option<ChartBtnPos>,
     panic_sell_pos: Option<ChartBtnPos>,
+    /// Положение оси цен (Left/Right/Hide) для графиков стека (per-окно). None = дефолт (Left).
+    price_axis_pos: Option<PriceAxisPos>,
     /// Якорь сравнения `(core, market)` — ведущий по цене (замок горит, стоит слева). None = выкл.
     compare_anchor: Option<(CoreId, String)>,
     /// Общее Y-окно сравнения, следует за последней изменённой панелью.
@@ -88,6 +90,7 @@ impl MainChartStack {
             layout_orientation: None,
             cancel_buy_pos: None,
             panic_sell_pos: None,
+            price_axis_pos: None,
             compare_anchor: None,
             compare_y: None,
             compare_orderbook_only: false,
@@ -142,6 +145,9 @@ impl MainChartStack {
                 self.panic_sell_pos.unwrap_or_default(),
                 pcx,
             )
+        });
+        panel.update(cx, |panel, pcx| {
+            panel.set_price_axis_pos(self.price_axis_pos.unwrap_or_default(), pcx)
         });
         panel
     }
@@ -418,6 +424,20 @@ impl MainChartStack {
 
     pub(crate) fn action_btn_pos(&self) -> (Option<ChartBtnPos>, Option<ChartBtnPos>) {
         (self.cancel_buy_pos, self.panic_sell_pos)
+    }
+
+    pub(crate) fn price_axis_pos(&self) -> Option<PriceAxisPos> {
+        self.price_axis_pos
+    }
+
+    /// Положение оси цен (Left/Right/Hide) для всех графиков стека (per-окно).
+    pub(crate) fn set_price_axis_pos(&mut self, pos: Option<PriceAxisPos>, cx: &mut Context<Self>) {
+        if self.price_axis_pos == pos {
+            return;
+        }
+        self.price_axis_pos = pos;
+        set_panels_price_axis_pos(&self.charts, pos.unwrap_or_default(), cx);
+        cx.notify();
     }
 
     /// Позиции кнопок Cancel Buy / Panic Sell для всех графиков стека (per-окно).

@@ -89,7 +89,19 @@ impl ChartPanel {
         pane: usize,
     ) -> Option<(moon_chart::view::Rect, moon_chart::view::Rect)> {
         let rect = self.local_pane_rect(pane)?;
-        let price_axis_w = moon_chart::PRICE_AXIS_W * self.last_ppp;
+        // Раскладка зеркалит ChartDataState: позиция оси (Left/Right/Hide) сдвигает плот/стакан/жёлоб.
+        // Режим метлы (orderbook_only) принудительно прячет ось — как в движке.
+        use crate::chart_persist::PriceAxisPos;
+        let axis_pos = if self.orderbook_only {
+            PriceAxisPos::Hide
+        } else {
+            self.price_axis_pos
+        };
+        let price_axis_w = if matches!(axis_pos, PriceAxisPos::Hide) {
+            0.0
+        } else {
+            moon_chart::PRICE_AXIS_W * self.last_ppp
+        };
         let time_axis_h = moon_chart::TIME_AXIS_H * self.last_ppp;
         let plot_h = (rect.h - time_axis_h).max(1.0);
         let glass_cap = rect.w * 0.5;
@@ -102,14 +114,26 @@ impl ChartPanel {
         } else {
             glass_base
         };
+        let axis_on_left = matches!(axis_pos, PriceAxisPos::Left);
+        let chart_x = if axis_on_left {
+            rect.x + price_axis_w
+        } else {
+            rect.x
+        };
+        let chart_w = (rect.w - price_axis_w - glass_w).max(1.0);
+        let glass_x = if matches!(axis_pos, PriceAxisPos::Right) {
+            chart_x + chart_w
+        } else {
+            rect.x + (rect.w - glass_w).max(1.0)
+        };
         let plot = moon_chart::view::Rect {
-            x: rect.x + price_axis_w,
+            x: chart_x,
             y: rect.y,
-            w: (rect.w - price_axis_w - glass_w).max(1.0),
+            w: chart_w,
             h: plot_h,
         };
         let glass = moon_chart::view::Rect {
-            x: rect.x + (rect.w - glass_w).max(1.0),
+            x: glass_x,
             y: rect.y,
             w: glass_w,
             h: plot_h,

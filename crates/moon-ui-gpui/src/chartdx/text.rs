@@ -225,7 +225,16 @@ impl RenderState {
         let mut readout_metrics_changed = false;
 
         for idx in 0..self.panes.len() {
-            let (active, pane_bounds, view, epoch_ms, core_name, market, orderbook_enabled) = {
+            let (
+                active,
+                pane_bounds,
+                view,
+                epoch_ms,
+                core_name,
+                market,
+                orderbook_enabled,
+                price_axis_pos,
+            ) = {
                 let pr = &self.panes[idx];
                 (
                     pr.active,
@@ -235,6 +244,7 @@ impl RenderState {
                     pr.core_name.clone(),
                     pr.market.clone(),
                     pr.orderbook_enabled,
+                    pr.price_axis_pos,
                 )
             };
             if !active {
@@ -249,6 +259,16 @@ impl RenderState {
             let plot_h = view.bounds[3] / sf;
             let plot_bottom = plot_top + plot_h;
             let plot_right = plot_left + plot_w;
+            // Сторона оси цен: Left → подписи в жёлобе слева от плота; Right → справа у края панели
+            // (жёлоб за стаканом); Hide → ось не рисуем вовсе. Правый якорь текста (align 1.0) общий.
+            use crate::chart_persist::PriceAxisPos;
+            let axis_hidden = matches!(price_axis_pos, PriceAxisPos::Hide);
+            let axis_on_right = matches!(price_axis_pos, PriceAxisPos::Right);
+            let axis_label_x = if axis_on_right {
+                pane_right - 4.0
+            } else {
+                plot_left - 4.0
+            };
 
             // Угловая подпись: имя ядра + тикер, светлый текст на прозрачной плашке (её строит
             // render_state по `caption_w`). Якорь правым краем: есть стакан → у края панели (над
@@ -328,7 +348,7 @@ impl RenderState {
                     skip_time_label_x = Some(rect_x_range_log(dst, sf));
                 }
 
-                if cy_log >= plot_top && cy_log <= plot_bottom {
+                if !axis_hidden && cy_log >= plot_top && cy_log <= plot_bottom {
                     let price = y_min + (plot_bottom - cy_log) / price_to_px.max(1e-6);
                     let label = format!("{price:.dec$}");
                     let metrics = self.measure_text(ctx, &label);
@@ -337,8 +357,13 @@ impl RenderState {
                         self.panes[idx].readout_price_width = width;
                         readout_metrics_changed = true;
                     }
-                    let x = (plot_left - 3.0)
-                        .max(pane_left + READOUT_INSET + READOUT_PAD_X + metrics.width.as_f32());
+                    // Right → плашка у правого края панели (за стаканом); Left → у левого жёлоба.
+                    let x = if axis_on_right {
+                        pane_right - 3.0
+                    } else {
+                        (plot_left - 3.0)
+                            .max(pane_left + READOUT_INSET + READOUT_PAD_X + metrics.width.as_f32())
+                    };
                     let dst = readout_rect_dst(x, cy_log, metrics, 1.0, 0.5, sf);
                     self.draw_text(ctx, &label, x, cy_log, 1.0, 0.5, readout)?;
                     skip_price_label_y = Some(rect_y_range_log(dst, sf));
@@ -352,7 +377,7 @@ impl RenderState {
             let mut last_y = f32::INFINITY;
             let mut p = (y_min / interval).ceil() * interval;
             let mut guard = 0;
-            while p <= top_price && guard < 256 {
+            while !axis_hidden && p <= top_price && guard < 256 {
                 let y = plot_bottom - (p - y_min) * price_to_px;
                 let overlaps_readout = skip_price_label_y
                     .is_some_and(|(top, bottom)| y >= top - 1.0 && y <= bottom + 1.0);
@@ -362,7 +387,7 @@ impl RenderState {
                     && (last_y - y).abs() >= min_v_gap
                 {
                     let label = format!("{p:.dec$}");
-                    self.draw_text(ctx, &label, plot_left - 4.0, y, 1.0, 0.5, ink)?;
+                    self.draw_text(ctx, &label, axis_label_x, y, 1.0, 0.5, ink)?;
                     last_y = y;
                 }
                 p += interval;

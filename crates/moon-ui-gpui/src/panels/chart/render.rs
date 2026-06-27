@@ -73,6 +73,7 @@ impl Render for ChartPanel {
             | self.chart.set_scale(self.scale)
             | self.chart.set_orderbook_enabled(self.orderbook_enabled)
             | self.chart.set_orderbook_only(self.orderbook_only)
+            | self.chart.set_price_axis_pos(self.price_axis_pos)
             | self.chart.set_follow(follow, now_unix_ms());
         // Режим сравнения: пока активен lock, держим Y-окно якоря (перебивает scale каждый кадр —
         // set_locked_y идемпотентен, без изменений вернёт false). Снятие lock — в set_locked_y.
@@ -96,6 +97,12 @@ impl Render for ChartPanel {
         // гонялся дважды (внутри гейта prepare ради pane_rects + здесь ради отрисовки).
         let axis_panes = self.chart.axis_panes(axes::local_offset_sec());
         self.input.pane_rects = self.chart.pane_rects();
+        // Хит-тест ввода должен знать сторону оси (отступ/ширина плота). Метла прячет ось.
+        self.input.price_axis_pos = if self.orderbook_only {
+            crate::chart_persist::PriceAxisPos::Hide
+        } else {
+            self.price_axis_pos
+        };
         // Угловой ✕ закрытия монеты — на панели графика (и Main, и AddToChart):
         // закрыл монету на Main → вернулись к лого. Позиция из раскладки панелей (девайс-px →
         // лог.px слота); собираем ДО canvas, который забирает axis_panes по move.
@@ -108,11 +115,14 @@ impl Render for ChartPanel {
         // П.2: кнопка «пин» в левом верхнем углу ВНУТРИ области графика (правее ценовой оси,
         // не на самой оси) — ТОЛЬКО на AddToChart-панелях (с TTL). Пин отменяет авто-закрытие.
         // (idx, pinned, left_px, top_px). PRICE_AXIS_W — логическая ширина оси (rect в девайс-px).
-        // В режиме «только стакан» оси цен нет → кнопки у левого края слота (без сдвига на ось).
-        let axis_off = if self.orderbook_only {
-            0.0
-        } else {
+        // Кнопки (пин/замок/метла) у ЛЕВОГО края плота → сдвиг на ось нужен ТОЛЬКО когда ось слева.
+        // При оси справа/скрытой (и в режиме метлы) плот начинается у края слота → сдвига нет.
+        let axis_off = if matches!(self.price_axis_pos, crate::chart_persist::PriceAxisPos::Left)
+            && !self.orderbook_only
+        {
             moon_chart::PRICE_AXIS_W
+        } else {
+            0.0
         };
         let pin_btns: Vec<(usize, bool, f32, f32)> = axis_panes
             .iter()
@@ -205,10 +215,17 @@ impl Render for ChartPanel {
                 let pane_left = rect.x / ppp;
                 let pane_w = rect.w / ppp;
                 // Зона чарта: [ось цены .. начало зоны стакана/управления]. Стакан-зону резервируем
-                // всегда (и при выключенном стакане), как просит ТЗ.
+                // всегда (и при выключенном стакане), как просит ТЗ. Жёлоб оси режем с той стороны,
+                // где она стоит: слева (axis_off) или справа за стаканом (доп. резерв справа).
                 let glass_reserve = moon_chart::GLASS_ZONE_PX.min(pane_w * 0.5);
-                let zone_left = pane_left + moon_chart::PRICE_AXIS_W;
-                let zone_right = pane_left + pane_w - glass_reserve;
+                let right_axis_reserve =
+                    if matches!(self.price_axis_pos, crate::chart_persist::PriceAxisPos::Right) {
+                        moon_chart::PRICE_AXIS_W
+                    } else {
+                        0.0
+                    };
+                let zone_left = pane_left + axis_off;
+                let zone_right = pane_left + pane_w - glass_reserve - right_axis_reserve;
                 let zone_w = zone_right - zone_left;
                 if zone_w < ACT_MIN_W {
                     continue;

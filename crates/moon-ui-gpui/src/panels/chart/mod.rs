@@ -99,6 +99,9 @@ pub struct ChartPanel {
     /// Позиции кнопок рыночных действий в зоне чарта (per-окно/вкладка, из попапа ⚙). Дефолт — Right.
     cancel_buy_pos: crate::chart_persist::ChartBtnPos,
     panic_sell_pos: crate::chart_persist::ChartBtnPos,
+    /// Положение оси цен (Left/Right/Hide) этой панели (per-окно/вкладка, из попапа ⚙). Применяется
+    /// в render (`set_price_axis_pos` движка) и в раскладке/хит-тесте. Дефолт — Left.
+    price_axis_pos: crate::chart_persist::PriceAxisPos,
     /// Номер AddToChart-вкладки (None = Main).
     num: Option<u32>,
     /// Рынки, владельцем которых является именно эта chart panel. Backend держит refcount
@@ -254,6 +257,7 @@ impl ChartPanel {
             auto_pin: false,
             cancel_buy_pos: Default::default(),
             panic_sell_pos: Default::default(),
+            price_axis_pos: Default::default(),
             num: None,
             registered_markets,
             registered_orderbook,
@@ -349,6 +353,7 @@ impl ChartPanel {
             auto_pin: false,
             cancel_buy_pos: Default::default(),
             panic_sell_pos: Default::default(),
+            price_axis_pos: Default::default(),
             num: Some(num),
             registered_markets: HashSet::new(),
             registered_orderbook: HashSet::new(),
@@ -523,6 +528,20 @@ impl ChartPanel {
     pub fn set_orderbook_only(&mut self, only: bool, cx: &mut Context<Self>) {
         if self.orderbook_only != only {
             self.orderbook_only = only;
+            self.view_dirty = true;
+            cx.notify();
+        }
+    }
+
+    /// Положение оси цен (Left/Right/Hide) этой панели (per-окно/вкладка). Применяется в render
+    /// через `set_price_axis_pos` движка; влияет и на раскладку плот/стакан/жёлоб, и на хит-тест.
+    pub fn set_price_axis_pos(
+        &mut self,
+        pos: crate::chart_persist::PriceAxisPos,
+        cx: &mut Context<Self>,
+    ) {
+        if self.price_axis_pos != pos {
+            self.price_axis_pos = pos;
             self.view_dirty = true;
             cx.notify();
         }

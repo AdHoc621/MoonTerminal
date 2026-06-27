@@ -63,6 +63,22 @@ impl Default for ChartBtnPos {
     }
 }
 
+/// Положение оси цен относительно чарта/стакана (per-tab). `Left` — жёлоб слева от графика
+/// (исторический дефолт); `Right` — жёлоб справа, ЗА стаканом (чарт и стакан не разделяются
+/// осью); `Hide` — оси нет, её место отдаётся графику. None в спеке = `Left`.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
+pub enum PriceAxisPos {
+    Hide,
+    Left,
+    Right,
+}
+
+impl Default for PriceAxisPos {
+    fn default() -> Self {
+        PriceAxisPos::Left
+    }
+}
+
 /// Состояние одной чарт-вкладки. `num == 0` — Main; `num >= 1` — AddToChart-N.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct ChartTabSpec {
@@ -127,6 +143,9 @@ pub struct ChartTabSpec {
     /// Режим «только стакан» у соседей сравнения (кнопка-метла): чарт+ось цен скрыты, виден стакан.
     #[serde(default)]
     pub compare_orderbook_only: bool,
+    /// Положение оси цен (Left/Right/Hide). None → дефолт (Left). Per-окно/вкладка.
+    #[serde(default)]
+    pub price_axis_pos: Option<PriceAxisPos>,
 }
 
 impl ChartTabSpec {
@@ -153,6 +172,7 @@ impl ChartTabSpec {
             custom_label: None,
             compare_anchor: None,
             compare_orderbook_only: false,
+            price_axis_pos: None,
         }
     }
 

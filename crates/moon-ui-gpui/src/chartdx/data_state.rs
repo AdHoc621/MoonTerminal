@@ -23,6 +23,7 @@ impl ChartDataState {
             scene_visible: false,
             orderbook_enabled: true,
             orderbook_only: false,
+            price_axis_pos: crate::chart_persist::PriceAxisPos::Left,
             order_highlight: None,
             order_drag_preview: None,
             market_source: None,
@@ -453,9 +454,14 @@ impl ChartDataState {
                 pr.gpu_prepare_dirty = true;
                 pixels_changed = true;
             }
-            // Режим «только стакан» (метла в сравнении): ось цен убираем, стакан на всю ширину,
-            // область чарта схлопываем (combo/grid/оси рисуются в ~0px → невидимы).
-            let price_axis_w = if self.orderbook_only {
+            // Позиция оси цен (per-окно). Режим «только стакан» (метла) принудительно прячет ось,
+            // перебивая per-tab настройку. Hide → жёлоба нет (место отдаётся графику).
+            let axis_pos = if self.orderbook_only {
+                crate::chart_persist::PriceAxisPos::Hide
+            } else {
+                self.price_axis_pos
+            };
+            let price_axis_w = if matches!(axis_pos, crate::chart_persist::PriceAxisPos::Hide) {
                 0.0
             } else {
                 moon_chart::PRICE_AXIS_W * self.last_ppp
@@ -479,14 +485,29 @@ impl ChartDataState {
             } else {
                 glass_base
             };
+            // Left → жёлоб оси слева (чарт сдвинут вправо), стакан у правого края.
+            // Right → чарт от левого края, стакан сразу за ним, ось — жёлоб справа ЗА стаканом.
+            // Hide → оси нет, чарт от левого края, стакан у правого края.
+            let axis_on_left = matches!(axis_pos, crate::chart_persist::PriceAxisPos::Left);
+            let chart_x = if axis_on_left {
+                rect.x + price_axis_w
+            } else {
+                rect.x
+            };
+            let chart_w = (rect.w - price_axis_w - glass_w).max(1.0);
+            let glass_x = if matches!(axis_pos, crate::chart_persist::PriceAxisPos::Right) {
+                chart_x + chart_w
+            } else {
+                rect.x + (rect.w - glass_w).max(1.0)
+            };
             let chart_area = Rect {
-                x: rect.x + price_axis_w,
+                x: chart_x,
                 y: rect.y,
-                w: (rect.w - price_axis_w - glass_w).max(1.0),
+                w: chart_w,
                 h: plot_h,
             };
             let glass_area = Rect {
-                x: rect.x + (rect.w - glass_w).max(1.0),
+                x: glass_x,
                 y: rect.y,
                 w: glass_w,
                 h: plot_h,
@@ -802,6 +823,8 @@ impl ChartDataState {
             // Флаг стакана в pane (для гейта угловой подписи в render_state/text). В режиме
             // «только стакан» стакан принудительно включён (даже если галка «Стакан» снята).
             pr.orderbook_only = self.orderbook_only;
+            // Эффективная позиция оси (с учётом форс-Hide в режиме метлы) — для рендера подписей.
+            pr.price_axis_pos = axis_pos;
             let orderbook_on = self.orderbook_enabled || self.orderbook_only;
             pr.orderbook_enabled = orderbook_on;
             // Стакан выключен (per-окно) → уровни не строим и не грузим (а если были — чистим).

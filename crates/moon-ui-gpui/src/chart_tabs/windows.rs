@@ -324,6 +324,7 @@ impl ChartTabs {
                         Option<bool>,
                         Option<(CoreId, String)>,
                         bool,
+                        Option<chart_persist::PriceAxisPos>,
                     )> = {
                         let specs = &this.backend.read(cx).chart_specs;
                         specs
@@ -345,12 +346,23 @@ impl ChartTabs {
                                         s.auto_pin,
                                         s.compare_anchor.clone(),
                                         s.compare_orderbook_only,
+                                        s.price_axis_pos,
                                     )
                                 })
                             })
                     };
-                    if let Some((coins, label, layout, orientation, ob, sz, ap, anchor, broom)) =
-                        custom
+                    if let Some((
+                        coins,
+                        label,
+                        layout,
+                        orientation,
+                        ob,
+                        sz,
+                        ap,
+                        anchor,
+                        broom,
+                        axis_pos,
+                    )) = custom
                     {
                         panel.update(cx, |s, c| {
                             s.set_hold_vacated(false);
@@ -367,6 +379,9 @@ impl ChartTabs {
                             }
                             if let Some(v) = ap {
                                 s.set_auto_pin(Some(v), c);
+                            }
+                            if axis_pos.is_some() {
+                                s.set_price_axis_pos(axis_pos, c);
                             }
                             for (core, market) in &coins {
                                 s.add_coin(*core, market, coin_search::MANUAL_COIN_TTL_MS, c);

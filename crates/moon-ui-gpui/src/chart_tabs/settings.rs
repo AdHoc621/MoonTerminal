@@ -220,6 +220,38 @@ impl ChartTabs {
         cx.notify();
     }
 
+    /// Положение оси цен активной вкладки (None → дефолт Left).
+    pub(super) fn active_price_axis_pos(&self, cx: &App) -> crate::chart_persist::PriceAxisPos {
+        let v = match &self.active {
+            Tab::Main => self.main.read(cx).price_axis_pos(),
+            Tab::Add(n, b) | Tab::Custom(n, b) => self
+                .add_stack(*n, b)
+                .and_then(|p| p.read(cx).price_axis_pos()),
+        };
+        v.unwrap_or_default()
+    }
+
+    /// Положение оси цен на АКТИВНОЙ вкладке + persist.
+    pub(super) fn apply_price_axis_pos(
+        &mut self,
+        pos: crate::chart_persist::PriceAxisPos,
+        cx: &mut Context<Self>,
+    ) {
+        match self.active.clone() {
+            Tab::Main => self.main.update(cx, |s, c| s.set_price_axis_pos(Some(pos), c)),
+            Tab::Add(..) | Tab::Custom(..) => {
+                if let Some(p) = self.active_stack() {
+                    p.update(cx, |s, c| s.set_price_axis_pos(Some(pos), c));
+                }
+            }
+        }
+        let (num, bucket) = self.active_stack_key();
+        self.upsert_spec(cx, num, &bucket, move |s| {
+            s.price_axis_pos = Some(pos);
+        });
+        cx.notify();
+    }
+
     /// Ориентация стека активной вкладки (None → дефолт Vertical).
     pub(super) fn active_layout_orientation(&self, cx: &App) -> Option<StackOrientation> {
         match &self.active {
@@ -363,11 +395,13 @@ impl ChartTabs {
         orientation: Option<StackOrientation>,
         cancel_pos: Option<ChartBtnPos>,
         panic_pos: Option<ChartBtnPos>,
+        price_axis_pos: Option<crate::chart_persist::PriceAxisPos>,
         cx: &mut Context<Self>,
     ) {
         let ob = orderbook.unwrap_or(true);
         let sz = show_zone.unwrap_or(true);
         let ap = auto_pin.unwrap_or(false);
+        let axis = price_axis_pos.unwrap_or_default();
         if include_main {
             self.main.update(cx, |s, c| {
                 s.set_layout(mode, height_fit, height_scroll, c);
@@ -377,6 +411,7 @@ impl ChartTabs {
                 s.set_auto_pin(Some(ap), c);
                 s.set_orientation(orientation, c);
                 s.set_action_btn_pos(cancel_pos, panic_pos, c);
+                s.set_price_axis_pos(Some(axis), c);
             });
             self.upsert_spec(cx, 0, &ChartBucket::Shared, |s| {
                 s.layout_mode = mode;
@@ -389,6 +424,7 @@ impl ChartTabs {
                 s.layout_orientation = orientation;
                 s.cancel_buy_pos = cancel_pos;
                 s.panic_sell_pos = panic_pos;
+                s.price_axis_pos = Some(axis);
             });
         }
         // «Чарты» = add-вкладки в стрипе + кастомные + откреплённые в окна (стеки в self.detached).
@@ -408,6 +444,7 @@ impl ChartTabs {
                 s.set_auto_pin(Some(ap), c);
                 s.set_orientation(orientation, c);
                 s.set_action_btn_pos(cancel_pos, panic_pos, c);
+                s.set_price_axis_pos(Some(axis), c);
             });
             self.upsert_spec(cx, num, &bucket, |s| {
                 s.layout_mode = mode;
@@ -420,6 +457,7 @@ impl ChartTabs {
                 s.layout_orientation = orientation;
                 s.cancel_buy_pos = cancel_pos;
                 s.panic_sell_pos = panic_pos;
+                s.price_axis_pos = Some(axis);
             });
         }
         self.backend.update(cx, |b, _| b.rebuild_orderbook_wanted());
@@ -449,6 +487,7 @@ impl ChartTabs {
                 r.orientation,
                 r.cancel_pos,
                 r.panic_pos,
+                r.price_axis_pos,
                 cx,
             );
         }

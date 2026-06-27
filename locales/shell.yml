@@ -161,6 +161,10 @@ chart.layout.auto_pin:
   ru: "Авто-пин при выставлении ордера"
   en: "Auto-pin on order"
   es: "Auto-fijar al poner orden"
+chart.layout.price_axis:
+  ru: "Ось цен"
+  en: "Price axis"
+  es: "Eje de precios"
 chart.coin.search:
   ru: "Монета…"
   en: "Coin…"

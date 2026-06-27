@@ -126,10 +126,11 @@ impl DetachedChartHost {
                     s.show_zone,
                     s.auto_pin,
                     (s.cancel_buy_pos, s.panic_sell_pos),
+                    s.price_axis_pos,
                 )
             })
         });
-        if let Some((m, hf, hs, ob, sz, ap, action_pos)) = saved {
+        if let Some((m, hf, hs, ob, sz, ap, action_pos, axis_pos)) = saved {
             if m.is_some() || hf.is_some() || hs.is_some() {
                 panel.update(cx, |p, pcx| p.set_layout(m, hf, hs, pcx));
             }
@@ -146,6 +147,9 @@ impl DetachedChartHost {
                 panel.update(cx, |p, pcx| {
                     p.set_action_btn_pos(action_pos.0, action_pos.1, pcx)
                 });
+            }
+            if axis_pos.is_some() {
+                panel.update(cx, |p, pcx| p.set_price_axis_pos(axis_pos, pcx));
             }
         }
         let layout_fit_input = cx.new(|cx| MoonInputState::new(window, cx));
@@ -410,6 +414,7 @@ impl DetachedChartHost {
             let (c, pp) = self.panel.read(cx).action_btn_pos();
             (Some(c.unwrap_or_default()), Some(pp.unwrap_or_default()))
         };
+        let price_axis_pos = Some(self.panel.read(cx).price_axis_pos().unwrap_or_default());
         self.backend.update(cx, |bk, bcx| {
             bk.chart_apply_all.push(crate::ChartApplyAll {
                 group,
@@ -424,6 +429,7 @@ impl DetachedChartHost {
                 orientation,
                 cancel_pos,
                 panic_pos,
+                price_axis_pos,
             });
             bcx.notify();
         });
@@ -541,6 +547,17 @@ impl DetachedChartHost {
         cx.notify();
     }
 
+    /// Положение оси цен этого окна + persist.
+    fn apply_price_axis_pos(&mut self, pos: chart_persist::PriceAxisPos, cx: &mut Context<Self>) {
+        self.panel
+            .update(cx, |p, c| p.set_price_axis_pos(Some(pos), c));
+        let bucket = self.bucket.clone();
+        self.upsert_spec(cx, self.num, &bucket, move |s| {
+            s.price_axis_pos = Some(pos);
+        });
+        cx.notify();
+    }
+
     fn persist_geometry(&mut self, window: &Window, cx: &mut Context<Self>) {
         // У восстановленного окна сохранение задержано до `persist_armed`: не даём стартовому
         // авто-размещению GPUI/Win32 перезаписать сохранённую позицию DPI-мусором.
@@ -617,6 +634,7 @@ impl Render for DetachedChartHost {
                 let (c, pp) = self.panel.read(cx).action_btn_pos();
                 (c.unwrap_or_default(), pp.unwrap_or_default())
             };
+            let price_axis_pos = self.panel.read(cx).price_axis_pos().unwrap_or_default();
             let is_custom = self.is_custom(cx);
             let pick_entity = cx.entity();
             let all_entity = cx.entity();
@@ -626,6 +644,7 @@ impl Render for DetachedChartHost {
             let or_entity = cx.entity();
             let cbp_entity = cx.entity();
             let psp_entity = cx.entity();
+            let pap_entity = cx.entity();
             let hover_entity = cx.entity();
             let size = layout_popup::content_size(cx, is_custom);
             div()
@@ -659,6 +678,7 @@ impl Render for DetachedChartHost {
                     auto_pin,
                     cancel_pos,
                     panic_pos,
+                    price_axis_pos,
                     p,
                     cx,
                     move |mode, app| {
@@ -711,6 +731,9 @@ impl Render for DetachedChartHost {
                     },
                     move |pos, app| {
                         psp_entity.update(app, |this, cx| this.apply_panic_pos(pos, cx));
+                    },
+                    move |pos, app| {
+                        pap_entity.update(app, |this, cx| this.apply_price_axis_pos(pos, cx));
                     },
                 ))
         });

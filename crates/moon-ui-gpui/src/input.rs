@@ -31,6 +31,9 @@ pub struct ChartInput {
     pub hovered_pane: Option<usize>,
     /// Раскладка панелей (девайс-px) прошлого кадра — hit-тест ввода.
     pub pane_rects: Vec<(usize, Rect)>,
+    /// Положение оси цен (обновляется в render): влияет на левый отступ плота и его ширину при
+    /// расчёте `cursor_x`/`plot_w`. Дефолт — Left (как и у панели).
+    pub price_axis_pos: crate::chart_persist::PriceAxisPos,
     /// Двойной клик по чарту → отправить монету на Main (владелец забирает).
     pub pending_to_main: Option<(CoreId, String)>,
 
@@ -65,10 +68,21 @@ impl ChartInput {
                 self.last_ptr.0.clamp(0.0, fallback_w.max(1.0)),
             );
         };
-        let price_axis_w = PRICE_AXIS_W * ppp;
+        use crate::chart_persist::PriceAxisPos;
+        let price_axis_w = if matches!(self.price_axis_pos, PriceAxisPos::Hide) {
+            0.0
+        } else {
+            PRICE_AXIS_W * ppp
+        };
         let glass_w = GLASS_ZONE_PX.min(r.w * 0.5);
         let plot_w = (r.w - price_axis_w - glass_w).max(1.0);
-        let cursor_x = (self.last_ptr.0 - r.x - price_axis_w).clamp(0.0, plot_w);
+        // Левый отступ плота = ширина оси ТОЛЬКО когда ось слева; справа/скрыта → плот от края слота.
+        let left_off = if matches!(self.price_axis_pos, PriceAxisPos::Left) {
+            price_axis_w
+        } else {
+            0.0
+        };
+        let cursor_x = (self.last_ptr.0 - r.x - left_off).clamp(0.0, plot_w);
         (plot_w, cursor_x)
     }
 

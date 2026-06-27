@@ -281,6 +281,7 @@ impl Render for ChartTabs {
             let show_zone = self.active_show_zone(cx);
             let auto_pin = self.active_auto_pin(cx);
             let (cancel_pos, panic_pos) = self.active_action_btn_pos(cx);
+            let price_axis_pos = self.active_price_axis_pos(cx);
             let include_main = matches!(self.active, Tab::Main);
             let is_custom = matches!(self.active, Tab::Custom(..));
             let apply_all_label = if include_main {
@@ -296,6 +297,7 @@ impl Render for ChartTabs {
             let or_entity = cx.entity();
             let cbp_entity = cx.entity();
             let psp_entity = cx.entity();
+            let pap_entity = cx.entity();
             let hover_entity = cx.entity();
             let size = layout_popup::content_size(cx, is_custom);
             div()
@@ -329,6 +331,7 @@ impl Render for ChartTabs {
                     auto_pin,
                     cancel_pos,
                     panic_pos,
+                    price_axis_pos,
                     p,
                     cx,
                     move |mode, app| {
@@ -352,6 +355,7 @@ impl Render for ChartTabs {
                             let ap = Some(this.active_auto_pin(cx));
                             let or = this.active_layout_orientation(cx);
                             let (cp, pp) = this.active_action_btn_pos(cx);
+                            let pax = this.active_price_axis_pos(cx);
                             this.apply_layout_to_all(
                                 include_main,
                                 mode,
@@ -364,6 +368,7 @@ impl Render for ChartTabs {
                                 or,
                                 Some(cp),
                                 Some(pp),
+                                Some(pax),
                                 cx,
                             );
                         });
@@ -394,6 +399,9 @@ impl Render for ChartTabs {
                     },
                     move |pos, app| {
                         psp_entity.update(app, |this, cx| this.apply_panic_pos(pos, cx));
+                    },
+                    move |pos, app| {
+                        pap_entity.update(app, |this, cx| this.apply_price_axis_pos(pos, cx));
                     },
                 ))
         });

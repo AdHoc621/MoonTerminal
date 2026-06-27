@@ -346,6 +346,17 @@ impl ChartEngine {
         true
     }
 
+    /// Положение оси цен (Left/Right/Hide) для всех панелей движка (per-окно). `true` при изменении.
+    pub fn set_price_axis_pos(&mut self, pos: crate::chart_persist::PriceAxisPos) -> bool {
+        let mut data = self.data.borrow_mut();
+        if data.price_axis_pos == pos {
+            return false;
+        }
+        data.price_axis_pos = pos;
+        data.mark_view_dirty();
+        true
+    }
+
     /// Глобальный live-follow из тулбара (Live/Пауза) для единственной панели этого
     /// `ChartEngine`. Реагирует только на смену самого глобального флага (явный клик).
     /// Пан/rejoin отдельной панели живут в её `view.follow`; сюда уже сведённое значение

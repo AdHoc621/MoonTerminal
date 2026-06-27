@@ -12,7 +12,7 @@ use moon_ui::{
 };
 use rust_i18n::t;
 
-use crate::chart_persist::{ChartBtnPos, StackLayoutMode, StackOrientation};
+use crate::chart_persist::{ChartBtnPos, PriceAxisPos, StackLayoutMode, StackOrientation};
 use crate::design;
 
 /// Порядок режимов в сегмент-контроле попапа (два положения).
@@ -80,6 +80,62 @@ fn pos_selector_row(
         .child(seg)
 }
 
+/// Порядок положений оси цен в селекторе: «—»=скрыть, L=слева, R=справа (за стаканом).
+const AXIS_POSITIONS: [PriceAxisPos; 3] =
+    [PriceAxisPos::Hide, PriceAxisPos::Left, PriceAxisPos::Right];
+
+fn axis_label(p: PriceAxisPos) -> &'static str {
+    match p {
+        PriceAxisPos::Hide => "—",
+        PriceAxisPos::Left => "L",
+        PriceAxisPos::Right => "R",
+    }
+}
+
+/// Строка-селектор положения оси цен: подпись слева + сегмент-контрол [— L R].
+fn axis_selector_row(
+    id: String,
+    caption: String,
+    current: PriceAxisPos,
+    p: MoonPalette,
+    cx: &App,
+    on_pick: impl Fn(PriceAxisPos, &mut App) + 'static,
+) -> impl IntoElement {
+    let sel = AXIS_POSITIONS.iter().position(|x| *x == current).unwrap_or(1);
+    let items: Vec<MoonSegmentItem> = AXIS_POSITIONS
+        .iter()
+        .enumerate()
+        .map(|(i, x)| {
+            let mut it = MoonSegmentItem::new("", axis_label(*x)).width(30.0);
+            if i == sel {
+                it = it.selected(true);
+            }
+            it
+        })
+        .collect();
+    let seg = MoonSegmentedControl::new(id)
+        .accent(MoonAccent::Blue)
+        .items(items)
+        .on_click(move |ix, _, _, cx| {
+            if let Some(x) = AXIS_POSITIONS.get(ix) {
+                on_pick(*x, cx);
+            }
+        })
+        .render();
+    h_flex()
+        .w_full()
+        .items_center()
+        .gap(design::ui_px(cx, 6.0))
+        .child(
+            div()
+                .flex_1()
+                .text_size(design::t_caption(cx))
+                .text_color(rgb(p.text))
+                .child(caption),
+        )
+        .child(seg)
+}
+
 /// Границы высоты слота (px). Меньше MIN (кроме 0 у Fit = растяжение) и больше MAX вводить нельзя.
 pub(super) const MIN_H: u16 = 20;
 pub(super) const MAX_H: u16 = 4000;
@@ -113,7 +169,9 @@ pub(super) fn content_size(cx: &App, with_rename: bool) -> Size<Pixels> {
         + cb_h
         + gap
         + cb_h
-        // + 2 строки селекторов позиции кнопок (Cancel Buy / Panic Sell).
+        // + 2 строки селекторов позиции кнопок (Cancel Buy / Panic Sell) + строка оси цен.
+        + gap
+        + cb_h
         + gap
         + cb_h
         + gap
@@ -134,7 +192,7 @@ fn mode_label(m: StackLayoutMode) -> &'static str {
 /// `height_fit_input`/`height_scroll_input` — раздельные поля (подписку на Blur/Enter держит
 /// вызывающий). `on_pick_mode` вызывается при выборе режима. Позиционируется вызывающим.
 #[allow(clippy::too_many_arguments)]
-pub(super) fn render_layout_popup<F, G, H, I, J, K, L, M>(
+pub(super) fn render_layout_popup<F, G, H, I, J, K, L, M, N>(
     id: &str,
     current: StackLayoutMode,
     orientation: StackOrientation,
@@ -146,6 +204,7 @@ pub(super) fn render_layout_popup<F, G, H, I, J, K, L, M>(
     auto_pin: bool,
     cancel_buy_pos: ChartBtnPos,
     panic_sell_pos: ChartBtnPos,
+    price_axis_pos: PriceAxisPos,
     p: MoonPalette,
     cx: &App,
     on_pick_mode: F,
@@ -157,6 +216,7 @@ pub(super) fn render_layout_popup<F, G, H, I, J, K, L, M>(
     on_toggle_orientation: K,
     on_pick_cancel_pos: L,
     on_pick_panic_pos: M,
+    on_pick_price_axis: N,
 ) -> AnyElement
 where
     F: Fn(StackLayoutMode, &mut App) + 'static,
@@ -167,6 +227,7 @@ where
     K: Fn(&mut App) + 'static,
     L: Fn(ChartBtnPos, &mut App) + 'static,
     M: Fn(ChartBtnPos, &mut App) + 'static,
+    N: Fn(PriceAxisPos, &mut App) + 'static,
 {
     let horizontal = orientation.is_horizontal();
     let sel = POPUP_MODES.iter().position(|m| *m == current).unwrap_or(0);
@@ -275,6 +336,15 @@ where
         cx,
         on_pick_panic_pos,
     );
+    // Селектор положения оси цен (— L R): скрыть / слева / справа за стаканом.
+    let price_axis_row = axis_selector_row(
+        format!("{id}-price-axis-pos"),
+        t!("chart.layout.price_axis").to_string(),
+        price_axis_pos,
+        p,
+        cx,
+        on_pick_price_axis,
+    );
 
     // Тоггл ориентации стека — рядом с «применить ко всем». «↕» = вертикально (стопка),
     // «↔» = горизонтально (колонки). Клик перестраивает текущее отображение активной вкладки.
@@ -355,6 +425,7 @@ where
         .child(auto_pin_cb)
         .child(cancel_pos_row)
         .child(panic_pos_row)
+        .child(price_axis_row)
         .into_any_element()
 }
 
