@@ -75,6 +75,7 @@ pub(super) fn col_title(col: OrdCol) -> String {
         OrdCol::Buy => "Buy".to_string(),
         OrdCol::Fill => "Fill".to_string(),
         OrdCol::Pnl => "PNL".to_string(),
+        OrdCol::PnlPct => "PNL %".to_string(),
         OrdCol::Tp => "TP".to_string(),
         OrdCol::Strat => "Strat".to_string(),
     }
@@ -97,6 +98,7 @@ fn column_def(col: OrdCol) -> MoonDataTableColumn {
         OrdCol::CurP => numeric_column("cur.p", title, 86.0),
         OrdCol::Fill => numeric_column("fill", title, 56.0),
         OrdCol::Pnl => numeric_column("pnl", title, 72.0),
+        OrdCol::PnlPct => numeric_column("pnl.pct", title, 64.0),
         OrdCol::Tp => numeric_column("tp", title, 80.0),
         OrdCol::Strat => numeric_column("strat", title, 90.0),
     }
@@ -151,6 +153,7 @@ fn cell_for(
         OrdCol::CurP => MoonDataCell::text(num(r.price as f64)),
         OrdCol::Fill => MoonDataCell::text(format!("{:.0}%", r.fill_pct)).tone(MoonTone::Muted),
         OrdCol::Pnl => pnl_cell(r),
+        OrdCol::PnlPct => pnl_pct_cell(r),
         OrdCol::Tp => tp_cell(r),
         OrdCol::Strat => MoonDataCell::text(r.strat.clone()).tone(MoonTone::Muted),
     }
@@ -233,10 +236,51 @@ fn pnl_cell(r: &OrderRow) -> MoonDataCell {
             } else {
                 MoonTone::Danger
             };
+            // PnL округляем до сотых (валютная величина), а не adaptive-формат как у цен.
             let text = if v >= 0.0 {
-                format!("+{}", num(v))
+                format!("+{v:.2}")
             } else {
-                num(v)
+                format!("{v:.2}")
+            };
+            MoonDataCell::text(text).tone(tone).weight(500.0)
+        }
+        None => MoonDataCell::text("–").tone(MoonTone::Muted),
+    }
+}
+
+/// PnL в процентах от входа: направленное движение цены `(mark − entry)/entry · dir · 100`.
+/// `None` по тем же условиям, что и [`order_pnl`] (нет исполнения / нет входной цены).
+fn order_pnl_pct(r: &OrderRow) -> Option<f64> {
+    let filled_qty = r.size * (r.fill_pct as f64) / 100.0;
+    if filled_qty <= 0.0 {
+        return None;
+    }
+    let entry = if r.is_short {
+        r.sell_price
+    } else {
+        r.buy_price
+    };
+    let mark = r.price as f64;
+    if entry <= 0.0 || mark <= 0.0 {
+        return None;
+    }
+    let dir = if r.is_short { -1.0 } else { 1.0 };
+    Some((mark - entry) / entry * dir * 100.0)
+}
+
+/// PnL%-ячейка: colored delta (зелёный/красный, со знаком, до сотых), `–` если позиции нет.
+fn pnl_pct_cell(r: &OrderRow) -> MoonDataCell {
+    match order_pnl_pct(r) {
+        Some(v) => {
+            let tone = if v >= 0.0 {
+                MoonTone::Positive
+            } else {
+                MoonTone::Danger
+            };
+            let text = if v >= 0.0 {
+                format!("+{v:.2}%")
+            } else {
+                format!("{v:.2}%")
             };
             MoonDataCell::text(text).tone(tone).weight(500.0)
         }

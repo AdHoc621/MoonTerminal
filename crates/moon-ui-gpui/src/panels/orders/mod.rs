@@ -156,12 +156,13 @@ pub(super) enum OrdCol {
     CurP,
     Fill,
     Pnl,
+    PnlPct,
     Tp,
     Strat,
 }
 
 impl OrdCol {
-    pub(super) const ALL: [OrdCol; 14] = [
+    pub(super) const ALL: [OrdCol; 15] = [
         OrdCol::Core,
         OrdCol::Side,
         OrdCol::Status,
@@ -174,6 +175,7 @@ impl OrdCol {
         OrdCol::CurP,
         OrdCol::Fill,
         OrdCol::Pnl,
+        OrdCol::PnlPct,
         OrdCol::Tp,
         OrdCol::Strat,
     ];
@@ -193,6 +195,7 @@ impl OrdCol {
             OrdCol::CurP => "cur.p",
             OrdCol::Fill => "fill",
             OrdCol::Pnl => "pnl",
+            OrdCol::PnlPct => "pnl.pct",
             OrdCol::Tp => "tp",
             OrdCol::Strat => "strat",
         }

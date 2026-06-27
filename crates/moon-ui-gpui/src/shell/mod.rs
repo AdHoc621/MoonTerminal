@@ -26,7 +26,7 @@ use moon_core::session::CoreId;
 
 use crate::chart_tabs::ChartTabs;
 use crate::dock_persist::DOCK_VERSION;
-use crate::panels::{AssetsView, DetectsPanel, LogPanel, OrderPanel, OrdersPanel, ReportPanel};
+use crate::panels::{AssetsView, DetectsPanel, LogPanel, OrdersPanel, ReportPanel};
 use crate::{Backend, controls, design, panels, terminal_chrome};
 
 /// Оболочка одной группы (= одно ОС-окно): header + единый `DockArea` + статус.
@@ -145,7 +145,6 @@ impl Shell {
                 )
             });
             let detects = cx.new(|cx| DetectsPanel::new(backend.clone(), group.clone(), cx));
-            let order = cx.new(|cx| OrderPanel::new(backend.clone(), group.clone(), cx));
 
             // Нижние вкладки — собираем, ПРОПУСКАЯ откреплённые (их окна откроет старт):
             // панель убрана из дока при откреплении, dock_persist хранит док без неё.
@@ -180,18 +179,10 @@ impl Shell {
 
             // ВСЁ — в center-сплите: размеры панелей меняются split-handle'ами,
             // tab-docking/drag-to-edge — отдельный следующий слой док-механики.
-            // Чарт-вкладки слева, детекты+ордер стопкой справа (≈220px), нижние вкладки внизу.
+            // Чарт-вкладки слева, детекты справа (≈220px), нижние вкладки внизу.
             // Тулбар (Размеры/Продажа/Масштаб) — отдельная фикс. полоса в Shell::render, не док.
             let chart_item = DockItem::tab(charts, &weak, window, cx);
-            let right = DockItem::v_split(
-                vec![
-                    DockItem::tab(detects, &weak, window, cx),
-                    DockItem::tab(order, &weak, window, cx),
-                ],
-                &weak,
-                window,
-                cx,
-            );
+            let right = DockItem::tab(detects, &weak, window, cx);
             let top = DockItem::split_with_sizes(
                 Axis::Horizontal,
                 vec![chart_item, right],
