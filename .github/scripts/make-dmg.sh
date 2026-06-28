@@ -3,7 +3,7 @@
 # Runs on the macos-14 runner (native tools: sips, iconutil, codesign, hdiutil).
 set -euo pipefail
 
-BIN="target/aarch64-apple-darwin/release/moonterminal"
+BIN="target/x86_64-apple-darwin/release/moonterminal"
 APP="dist/MoonTerminal.app"
 DMG="dist/MoonTerminal.dmg"
 SRC_ICON="assets/icons/0.png"
