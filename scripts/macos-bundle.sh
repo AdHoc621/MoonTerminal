@@ -19,7 +19,7 @@ fi
 
 cargo "${build_args[@]}"
 
-BIN_DIR="$ROOT/target/$PROFILE"
+BIN_DIR="$ROOT/target/x86_64-apple-darwin/$PROFILE"
 BIN="$BIN_DIR/moonterminal"
 if [[ ! -x "$BIN" ]]; then
   echo "missing built binary: $BIN" >&2
